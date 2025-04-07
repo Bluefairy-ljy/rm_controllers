@@ -263,11 +263,15 @@ template <typename... T>
 void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& period)
 {
   geometry_msgs::Twist vel_base = odometry();  // on base_link frame
+  // enable_odom_tf_标志为真时，根据base_link坐标系下的速度信息，结合base2odom的坐标转换关系，计算并更新机器人在odom坐标系下的位姿信息
   if (enable_odom_tf_)
   {
+    // 分别用于存储线速度和角速度的三维向量数据
     geometry_msgs::Vector3 linear_vel_odom, angular_vel_odom;
     try
     {
+      // 问tf要base2odom的坐标转换关系
+      // lookupTransfrom函数的作用是取得两个从未有联系的坐标系得相对关系
       odom2base_ = robot_state_handle_.lookupTransform("odom", "base_link", ros::Time(0));
     }
     catch (tf2::TransformException& ex)
@@ -278,28 +282,38 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
     }
     odom2base_.header.stamp = time;
     // integral vel to pos and angle
+    // 把base_link的线速度和角速度转换到odom坐标系下，用于积分得到位移和角度
     tf2::doTransform(vel_base.linear, linear_vel_odom, odom2base_);
     tf2::doTransform(vel_base.angular, angular_vel_odom, odom2base_);
+    // 计算线速度的模长，如果小于最大线速度，则进行积分，积分结果表示当前时刻odom坐标系下的机器人的位置
     double length =
         std::sqrt(std::pow(linear_vel_odom.x, 2) + std::pow(linear_vel_odom.y, 2) + std::pow(linear_vel_odom.z, 2));
     if (length < max_odom_vel_)
     {
       // avoid nan vel
+      // 填充odom2base_的平移量(这里实际上是base相对于odom的移动距离)
       odom2base_.transform.translation.x += linear_vel_odom.x * period.toSec();
       odom2base_.transform.translation.y += linear_vel_odom.y * period.toSec();
       odom2base_.transform.translation.z += linear_vel_odom.z * period.toSec();
     }
+    // 计算角速度的模长，如果大于0.001，则进行积分，积分结果表示当前时刻odom坐标系下的机器人的角度
     length =
         std::sqrt(std::pow(angular_vel_odom.x, 2) + std::pow(angular_vel_odom.y, 2) + std::pow(angular_vel_odom.z, 2));
     if (length > 0.001)
     {  // avoid nan quat
+      // odom2base_quat代表从odom2base的完整旋转，trans_quat代表在特定时间间隔内的旋转增量
       tf2::Quaternion odom2base_quat, trans_quat;
+      // tf2::fromMsg函数用于将消息类型的数据转换为tf2库中对应的几何类型，相对地，tf2::toMsg函数用于将tf2库中的几何类型转换为消息类型的数据
+      // 将odom2base_.transform.rotation中的四元数消息数据转换为tf2::Quaternion类型的变量odom2base_quat。也就是将四元数转换为旋转向量
       tf2::fromMsg(odom2base_.transform.rotation, odom2base_quat);
+      // 旋转角度为角速度模长的乘以时间间隔
       trans_quat.setRotation(tf2::Vector3(angular_vel_odom.x / length, angular_vel_odom.y / length,
                                           angular_vel_odom.z / length),
                              length * period.toSec());
+      // 通过两者相乘实现了在特定时间间隔内更新从base2odom的旋转
       odom2base_quat = trans_quat * odom2base_quat;
       odom2base_quat.normalize();
+      // 将更新后的旋转向量转换为四元数，填充odom2base_的旋转量(这里实际上是base相对于odom的旋转角度)
       odom2base_.transform.rotation = tf2::toMsg(odom2base_quat);
     }
   }
@@ -309,11 +323,14 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
     auto* odom_msg = odom_buffer_.readFromRT();
 
     tf2::Transform world2sensor;
+    // 将odom_msg中包含的机器人位置信息（x, y, z）设置为world2sensor坐标变换的原点
     world2sensor.setOrigin(
         tf2::Vector3(odom_msg->pose.pose.position.x, odom_msg->pose.pose.position.y, odom_msg->pose.pose.position.z));
+    // 将odom_msg中的四元数数据设置为world2sensor对象的旋转属性
     world2sensor.setRotation(tf2::Quaternion(odom_msg->pose.pose.orientation.x, odom_msg->pose.pose.orientation.y,
                                              odom_msg->pose.pose.orientation.z, odom_msg->pose.pose.orientation.w));
 
+    // 当world2odom_的旋转部分为单位四元数（即tf2::Quaternion::getIdentity()）时，说明这是第一次接收到里程计消息，此时需要进行world2odom_的计算
     if (world2odom_.getRotation() == tf2::Quaternion::getIdentity())  // First received
     {
       tf2::Transform odom2sensor;
@@ -321,6 +338,7 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
       {
         geometry_msgs::TransformStamped tf_msg =
             robot_state_handle_.lookupTransform("odom", "livox_frame", odom_msg->header.stamp);
+        // 将tf_msg.transform中的消息转换为tf2::Transform类型的变量odom2sensor
         tf2::fromMsg(tf_msg.transform, odom2sensor);
       }
       catch (tf2::TransformException& ex)
@@ -343,12 +361,15 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
       return;
     }
     tf2::Transform odom2base = world2odom_.inverse() * world2sensor * base2sensor.inverse();
+    // 通过两坐标系原点间的平移量可知两坐标系的平移距离
     odom2base_.transform.translation.x = odom2base.getOrigin().x();
     odom2base_.transform.translation.y = odom2base.getOrigin().y();
     odom2base_.transform.translation.z = odom2base.getOrigin().z();
     topic_update_ = false;
   }
 
+  //设置从里程计坐标系（odom）到机器人基座坐标系（base_link）的变换关系，并指定该变换关系所属的控制器命名空间为 "rm_chassis_controllers"
+  // 此操作会更新机器人状态处理程序中的坐标变换信息
   robot_state_handle_.setTransform(odom2base_, "rm_chassis_controllers");
 
   if (publish_rate_ > 0.0 && last_publish_time_ + ros::Duration(1.0 / publish_rate_) < time)
@@ -362,6 +383,7 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
       odom_pub_->unlockAndPublish();
     }
     if (enable_odom_tf_ && publish_odom_tf_)
+      //通过 TF 广播器发布从里程计坐标系到机器人基座坐标系的变换信息
       tf_broadcaster_.sendTransform(odom2base_);
     last_publish_time_ = time;
   }
