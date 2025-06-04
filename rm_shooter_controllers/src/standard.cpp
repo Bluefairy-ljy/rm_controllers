@@ -44,6 +44,7 @@ namespace rm_shooter_controllers
 {
 bool Controller::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle& root_nh, ros::NodeHandle& controller_nh)
 {
+  //config_里存放可以在动态调参中修改的参数
   config_ = { .block_effort = getParam(controller_nh, "block_effort", 0.),
               .block_speed = getParam(controller_nh, "block_speed", 0.),
               .block_duration = getParam(controller_nh, "block_duration", 0.),
@@ -56,7 +57,7 @@ bool Controller::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle& ro
               .wheel_speed_drop_threshold = getParam(controller_nh, "wheel_speed_drop_threshold", 10.),
               .wheel_speed_raise_threshold = getParam(controller_nh, "wheel_speed_raise_threshold", 3.1) };
   config_rt_buffer.initRT(config_);
-  push_per_rotation_ = getParam(controller_nh, "push_per_rotation", 0);
+  push_per_rotation_ = getParam(controller_nh, "push_per_rotation", 0);//拨盘中一圈有几颗弹
   push_wheel_speed_threshold_ = getParam(controller_nh, "push_wheel_speed_threshold", 0.);
   freq_threshold_ = getParam(controller_nh, "freq_threshold", 20.);
   anti_friction_block_duty_cycle_ = getParam(controller_nh, "anti_friction_block_duty_cycle", 0.5);
@@ -64,6 +65,7 @@ bool Controller::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle& ro
   friction_block_effort_ = getParam(controller_nh, "friction_block_effort", 0.2);
   friction_block_vel_ = getParam(controller_nh, "friction_block_vel", 1.0);
 
+  //订阅消息类型为rm_msgs::ShootCmd
   cmd_subscriber_ = controller_nh.subscribe<rm_msgs::ShootCmd>("command", 1, &Controller::commandCB, this);
   local_heat_state_pub_.reset(new realtime_tools::RealtimePublisher<rm_msgs::LocalHeatState>(
       controller_nh, "/local_heat_state/shooter_state", 10));
@@ -78,25 +80,34 @@ bool Controller::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle& ro
   XmlRpc::XmlRpcValue friction;
   double wheel_speed_offset;
   double wheel_speed_direction;
+  //获取硬件接口
   effort_joint_interface_ = robot_hw->get<hardware_interface::EffortJointInterface>();
+  //键名 + 存储变量。从参数服务器查找键为"friction"的参数，存在friction变量里
   controller_nh.getParam("friction", friction);
+  //its.first是键名（字符串），表示摩擦轮组的名称，也就是friction_left和friction_right；
+  //its.second是值（XmlRpc::XmlRpcValue），表示该组的详细配置
   for (const auto& its : friction)
   {
     std::vector<double> wheel_speed_offset_temp;
     std::vector<double> wheel_speed_direction_temp;
+    //ctrl_frictions是摩擦轮组
     std::vector<effort_controllers::JointVelocityController*> ctrl_frictions;
+    //it.first是left_friction_wheel
     for (const auto& it : its.second)
     {
       ros::NodeHandle nh = ros::NodeHandle(controller_nh, "friction/" + its.first + "/" + it.first);
       wheel_speed_offset_temp.push_back(nh.getParam("wheel_speed_offset", wheel_speed_offset) ? wheel_speed_offset : 0.);
       wheel_speed_direction_temp.push_back(
           nh.getParam("wheel_speed_direction", wheel_speed_direction) ? wheel_speed_direction : 1.);
+      //ctrl_friction是每一个摩擦轮组里的一个控制对象
       effort_controllers::JointVelocityController* ctrl_friction = new effort_controllers::JointVelocityController;
       if (ctrl_friction->init(effort_joint_interface_, nh))
+      //一行是一个组里摩擦轮的控制器
         ctrl_frictions.push_back(ctrl_friction);
       else
         return false;
     }
+    //ctrls_friction_是最终构建出的二维容器，每一组为一行
     ctrls_friction_.push_back(ctrl_frictions);
     wheel_speed_offsets_.push_back(wheel_speed_offset_temp);
     wheel_speed_directions_.push_back(wheel_speed_direction_temp);
@@ -114,17 +125,23 @@ void Controller::starting(const ros::Time& /*time*/)
 
 void Controller::update(const ros::Time& time, const ros::Duration& period)
 {
+  //更新读到的命令
   cmd_ = *cmd_rt_buffer_.readFromRT();
+  //更新参数配置
   config_ = *config_rt_buffer.readFromRT();
+  //目前的状态与接收到的不一样，满足下面的条件就更新状态
   if (state_ != cmd_.mode)
   {
+    //目前状态不是BLOCK
     if (state_ != BLOCK)
+      //（目前状态不是PUSH，或者接收到的状态不是READY）||（接收到的状态是READY，并且（目标位置与目前位置相差小于退出PUSH的阈值，或者接收指令的频率大于频率阈值））
       if ((state_ != PUSH || cmd_.mode != READY) ||
           (cmd_.mode == READY &&
            (std::fmod(std::abs(ctrl_trigger_.command_struct_.position_ - ctrl_trigger_.getPosition()), 2. * M_PI) <
                 config_.exit_push_threshold ||
             cmd_.hz >= freq_threshold_)))
       {
+        //目前的状态是STOP，并且接收到的状态是READY
         if (state_ == STOP && cmd_.mode == READY)
           enter_ready_ = true;
         state_ = cmd_.mode;
@@ -156,8 +173,10 @@ void Controller::update(const ros::Time& time, const ros::Duration& period)
     shoot_state_pub_->msg_.state = state_;
     shoot_state_pub_->unlockAndPublish();
   }
+  //遍历每一行，实际还是一个容器（摩擦轮组）
   for (auto& ctrl_frictions : ctrls_friction_)
   {
+    //遍历每一行的元素，也就是每一个摩擦轮
     for (auto& ctrl_friction : ctrl_frictions)
     {
       ctrl_friction->update(time, period);
@@ -202,16 +221,20 @@ void Controller::push(const ros::Time& time, const ros::Duration& period)
     ROS_INFO("[Shooter] Enter PUSH");
   }
   bool wheel_speed_ready = true;
+  //判断是否满足发射条件
   for (size_t i = 0; i < ctrls_friction_.size(); i++)
   {
     for (size_t j = 0; j < ctrls_friction_[i].size(); j++)
     {
+      //转向乘速度恒正，push_wheel_speed_threshold_给了默认值0，所以第一个判断恒不满足，若满足第二个判断（一秒转不到半圈），则不能打弹
       if (wheel_speed_directions_[i][j] * ctrls_friction_[i][j]->joint_.getVelocity() <
               push_wheel_speed_threshold_ * ctrls_friction_[i][j]->command_ ||
           wheel_speed_directions_[i][j] * ctrls_friction_[i][j]->joint_.getVelocity() <= M_PI)
         wheel_speed_ready = false;
     }
   }
+  //摩擦轮速度给0或者满足发射条件，同时频率没问题，就能进入PUSH模式
+  //单独调试拨盘：摩擦轮转速给0，频率正常，不放弹可以单测拨盘
   if ((cmd_.wheel_speed == 0. || wheel_speed_ready) && (time - last_shoot_time_).toSec() >= 1. / cmd_.hz)
   {  // Time to shoot!!!
     if (cmd_.hz >= freq_threshold_)

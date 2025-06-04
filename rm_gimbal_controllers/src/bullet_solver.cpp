@@ -43,29 +43,37 @@
 namespace rm_gimbal_controllers
 {
 BulletSolver::BulletSolver(ros::NodeHandle& controller_nh)
-{
-  config_ = { .resistance_coff_qd_10 = getParam(controller_nh, "resistance_coff_qd_10", 0.),
+{//config_里是需要动态调参的参数部分
+  config_ = {
+              //resistance_coff_qd是不同速度下的空气阻力系数，步兵不调，因为基本没有影响
+              //表征弹丸在空气中飞行时受到的阻力影响程度，该参数为经验参，该系数直接影响飞行轨迹的抛物线曲率
+              .resistance_coff_qd_10 = getParam(controller_nh, "resistance_coff_qd_10", 0.),
               .resistance_coff_qd_15 = getParam(controller_nh, "resistance_coff_qd_15", 0.),
               .resistance_coff_qd_16 = getParam(controller_nh, "resistance_coff_qd_16", 0.),
               .resistance_coff_qd_18 = getParam(controller_nh, "resistance_coff_qd_18", 0.),
               .resistance_coff_qd_30 = getParam(controller_nh, "resistance_coff_qd_30", 0.),
-              .g = getParam(controller_nh, "g", 0.),
+              .g = getParam(controller_nh, "g", 0.),//重力加速度，不调
+              //发射延迟。从发出射击指令到实际射击（摩擦轮掉速）的时间延迟，单位秒，主要为硬件响应时间。
+              //调瞄时，如果装甲板过去了，子弹才射到，说明子弹滞后了，这时把delay给大，就会提前响应，进而避免滞后
               .delay = getParam(controller_nh, "delay", 0.),
-              .wait_next_armor_delay = getParam(controller_nh, "wait_next_armor_delay", 0.105),
-              .wait_diagonal_armor_delay = getParam(controller_nh, "wait_diagonal_armor_delay", 0.105),
+              .wait_next_armor_delay = getParam(controller_nh, "wait_next_armor_delay", 0.105),//下一块
+              .wait_diagonal_armor_delay = getParam(controller_nh, "wait_diagonal_armor_delay", 0.105),//下两块
               .dt = getParam(controller_nh, "dt", 0.),
               .timeout = getParam(controller_nh, "timeout", 0.),
+              //禁止开火时间。在装甲板切换过程中禁止开火的时间窗口，确保云台完全稳定后才允许射击，避免误射
               .ban_shoot_duration = getParam(controller_nh, "ban_shoot_duration", 0.0),
+              //切换时间。具体指云台从一个装甲板切换到相邻装甲板所需的时间，单位秒。包括机械转动时间和稳定时间
               .gimbal_switch_duration = getParam(controller_nh, "gimbal_switch_duration", 0.0),
               .max_switch_angle = getParam(controller_nh, "max_switch_angle", 40.0),
               .min_switch_angle = getParam(controller_nh, "min_switch_angle", 2.0),
               .min_shoot_beforehand_vel = getParam(controller_nh, "min_shoot_beforehand_vel", 4.5),
               .max_chassis_angular_vel = getParam(controller_nh, "max_chassis_angular_vel", 8.5),
-              .track_rotate_target_delay = getParam(controller_nh, "track_rotate_target_delay", 0.),
-              .track_move_target_delay = getParam(controller_nh, "track_move_target_delay", 0.),
+              .track_rotate_target_delay = getParam(controller_nh, "track_rotate_target_delay", 0.),//对方旋转
+              .track_move_target_delay = getParam(controller_nh, "track_move_target_delay", 0.),//对方平移
               .min_fit_switch_count = getParam(controller_nh, "min_fit_switch_count", 3) };
+  //最大跟随敌方目标的速度
   max_track_target_vel_ = getParam(controller_nh, "max_track_target_vel", 5.0);
-  switch_hysteresis_ = getParam(controller_nh, "switch_hysteresis", 1.0);
+  //把数据放在缓存区
   config_rt_buffer_.initRT(config_);
 
   marker_desire_.header.frame_id = "odom";
@@ -83,6 +91,7 @@ BulletSolver::BulletSolver(ros::NodeHandle& controller_nh)
   marker_real_.color.r = 0.0;
   marker_real_.color.g = 1.0;
 
+  // 动态调参
   d_srv_ = new dynamic_reconfigure::Server<rm_gimbal_controllers::BulletSolverConfig>(controller_nh);
   dynamic_reconfigure::Server<rm_gimbal_controllers::BulletSolverConfig>::CallbackType cb =
       [this](auto&& PH1, auto&& PH2) { reconfigCB(PH1, PH2); };
@@ -117,16 +126,24 @@ double BulletSolver::getResistanceCoefficient(double bullet_speed) const
   return resistance_coff;
 }
 
+//形参 pos目标中心相对于我方机器人的位置，vel目标中心相对于我方机器人的速度，bullet_speed子弹速度，yaw目标装甲板相对于我方机器人的yaw角度，
+//v_yaw目标装甲板相对于我方机器人的角速度，r1半径1,r2半径2，dz相邻装甲板的高度差，armors_num装甲板数量
 bool BulletSolver::solve(geometry_msgs::Point pos, geometry_msgs::Vector3 vel, double bullet_speed, double yaw,
                          double v_yaw, double r1, double r2, double dz, int armors_num, double chassis_angular_vel_z)
 {
+  //从数据缓存区获取config_里的参数
   config_ = *config_rt_buffer_.readFromRT();
   bullet_speed_ = bullet_speed;
   resistance_coff_ = getResistanceCoefficient(bullet_speed_) != 0 ? getResistanceCoefficient(bullet_speed_) : 0.001;
 
   double temp_z = pos.z;
+  // 目标点在xoy面的投影到原点的距离
   double target_rho = std::sqrt(std::pow(pos.x, 2) + std::pow(pos.y, 2));
+  //因为yaw只在xoy平面上移动，所以这里只需要通过目标点的xy来获取yaw的角度
+  //std::atan2(y,x)会返回arctan(y/x)；这里通过对目标点的xy坐标计算反正切，得到云台yaw应该转动的角度
   output_yaw_ = std::atan2(pos.y, pos.x);
+  //将目标点投影到xoy平面，与原点连线；通过求这条连线与目标点的z高度的反正切，可以得到pitch的角度0
+  //temp_z最开始是：从track拿到pos的z减去odom2pitch的z，也就是相对pitch的目标点的z；后面会根据每次迭代的结果，把z的误差叠加到这里
   output_pitch_ = std::atan2(temp_z, std::sqrt(std::pow(pos.x, 2) + std::pow(pos.y, 2)));
   double rough_fly_time =
       (-std::log(1 - target_rho * resistance_coff_ / (bullet_speed_ * std::cos(output_pitch_)))) / resistance_coff_;
@@ -135,17 +152,12 @@ bool BulletSolver::solve(geometry_msgs::Point pos, geometry_msgs::Vector3 vel, d
   double z = pos.z;
   double max_switch_angle = config_.max_switch_angle / 180 * M_PI;
   double min_switch_angle = config_.min_switch_angle / 180 * M_PI;
-  if (track_target_)
-  {
-    if (std::abs(v_yaw) >= max_track_target_vel_ + switch_hysteresis_)
-      track_target_ = false;
-  }
-  else
-  {
-    if (std::abs(v_yaw) <= max_track_target_vel_ - switch_hysteresis_)
-      track_target_ = true;
-  }
+  track_target_ = std::abs(v_yaw) < max_track_target_vel_;
+  //切换角
+  //当枪管指向和车体中心连线的夹角超过此阈值时，系统会考虑切换到更合适的装甲板（也就是下一块）
+  //这个角度阈值会受到自身陀螺速度、对方陀螺速度、我敌方距离等影响
   double switch_armor_angle =
+    //速度越大，角度越小？
       track_target_ ?
           (acos(r / target_rho) - max_switch_angle +
            (-acos(r / target_rho) + (max_switch_angle + min_switch_angle)) * std::abs(v_yaw) / max_track_target_vel_) *
