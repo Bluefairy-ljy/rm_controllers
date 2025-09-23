@@ -14,9 +14,7 @@ add_definitions(-Wall -Werror)
 find_package(catkin REQUIRED
         COMPONENTS
         roscpp
-
         rm_common
-
         controller_interface
         effort_controllers
         tf2_eigen
@@ -46,9 +44,7 @@ catkin_package(
         LIBRARIES
         CATKIN_DEPENDS
         roscpp
-
         rm_common
-
         effort_controllers
         tf2_eigen
         tf2_geometry_msgs
@@ -68,7 +64,7 @@ include_directories(
 )
 
 ## Declare a cpp library
-add_library(${PROJECT_NAME} src/gimbal_base.cpp src/bullet_solver.cpp)
+add_library(${PROJECT_NAME} src/gimbal_base.cpp src/bullet_solver.cpp src/ballistic_solver.cpp)
 
 ## Specify libraries to link executable targets against
 target_link_libraries(${PROJECT_NAME} ${catkin_LIBRARIES})

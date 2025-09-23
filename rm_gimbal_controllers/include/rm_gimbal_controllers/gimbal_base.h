@@ -49,6 +49,7 @@
 #include <rm_msgs/GimbalPosState.h>
 #include <rm_gimbal_controllers/GimbalBaseConfig.h>
 #include <rm_gimbal_controllers/bullet_solver.h>
+#include <rm_gimbal_controllers/ballistic_solver.h>
 #include <tf2_eigen/tf2_eigen.h>
 #include <Eigen/Eigen>
 #include <control_toolbox/pid.h>
@@ -165,6 +166,7 @@ private:
   bool has_imu_ = true;
 
   std::shared_ptr<BulletSolver> bullet_solver_;
+  std::unique_ptr<BallisticSolver> ballistic_solver_;
 
   // ROS Interface
   ros::Time last_publish_time_{};

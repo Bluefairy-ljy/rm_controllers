@@ -177,6 +177,7 @@ void Controller::update(const ros::Time& time, const ros::Duration& period)
     ROS_WARN_THROTTLE(5, "%s\n", ex.what());
     return;
   }
+  ballistic_solver_->getLaunchPoint(odom2base_,odom2gimbal_);
   updateChassisVel();
   if (state_ != cmd_gimbal_.mode)
   {
