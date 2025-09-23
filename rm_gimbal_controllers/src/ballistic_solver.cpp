@@ -36,11 +36,11 @@ bool BallisticSolver::solver(const rm_msgs::TrackData& track_data, double& yaw, 
   launch2target.x = track_data.position.x - launch_point_.x;
   launch2target.y = track_data.position.y - launch_point_.y;
   launch2target.z = track_data.position.z - launch_point_.z;
-  double target_dis = std::sqrt(launch2target.x * launch2target.x + launch2target.y * launch2target.y);
+  double target_dis = std::sqrt(launch2target.x * launch2target.x + launch2target.y * launch2target.y) - config_.gun_len;
   double target_hgt = launch2target.z;
   yaw = std::atan2(launch2target.y, launch2target.x);
-  // Use LUT to get initial guess
-  initial_pitch = output_pitch_match_lut_.output(target_dis);
+  // Use LUT to get initial guess.Originally defined: negative pitch indicates upward angle (head up)
+  initial_pitch = -output_pitch_match_lut_.output(target_dis);
   // Error function for root finding
   auto error_function = [&](double pitch_angle) -> double {
     return simulate(pitch_angle, initial_vel, target_dis, target_hgt);
@@ -48,11 +48,14 @@ bool BallisticSolver::solver(const rm_msgs::TrackData& track_data, double& yaw, 
   bool success = false;
   try
   {
-    double lower_bound = std::max(initial_pitch - 0.3, 0.1);
-    double upper_bound = std::min(initial_pitch + 0.3, M_PI / 2 - 0.1);
+    // Set search interval for root finding
+    double lower_bound = std::max(initial_pitch - 0.3, -M_PI/2 + 0.1);
+    double upper_bound = std::min(initial_pitch + 0.3,  M_PI/2 - 0.1);
     boost::uintmax_t max_iterations = 15;
+    // Perform solving: find pitch_angle ∈ [lower_bound, upper_bound] such that error_function(pitch_angle) ≈ 0
     auto result = boost::math::tools::toms748_solve(error_function, lower_bound, upper_bound,
                                                     boost::math::tools::eps_tolerance<double>(5), max_iterations);
+    // Take the midpoint of the solution interval as the final solution because TOMS748 returns a convergence interval
     final_pitch = (result.first + result.second) / 2.0;
     double final_error = error_function(final_pitch);
     success = std::abs(final_error) < 0.05;
@@ -63,11 +66,11 @@ bool BallisticSolver::solver(const rm_msgs::TrackData& track_data, double& yaw, 
     final_pitch = initial_pitch;
     success = false;
   }
-  pitch = final_pitch;
+  pitch = -final_pitch;
   return success;
 }
 
-void BallisticSolver::getLaunchPoint(const geometry_msgs::TransformStamped& odom2gimbal, const geometry_msgs::TransformStamped& odom2base)
+/*void BallisticSolver::getLaunchPoint(const geometry_msgs::TransformStamped& odom2gimbal, const geometry_msgs::TransformStamped& odom2base)
 {
   BallisticConfig config = *config_rt_buffer_.readFromRT();
   double base_x = odom2base.transform.translation.x;
@@ -86,6 +89,13 @@ void BallisticSolver::getLaunchPoint(const geometry_msgs::TransformStamped& odom
   launch_point_.x = base_x + config.gun_len * cos_pitch * std::cos(yaw_base);
   launch_point_.y = base_y + config.gun_len * cos_pitch * std::sin(yaw_base);
   launch_point_.z = base_z + config.gun_len * sin_pitch;
+}*/
+
+void BallisticSolver::getLaunchPoint(const geometry_msgs::TransformStamped& odom2gimbal, const geometry_msgs::TransformStamped& odom2base)
+{
+  launch_point_.x = odom2gimbal.transform.translation.x;
+  launch_point_.y = odom2gimbal.transform.translation.y;
+  launch_point_.z = odom2gimbal.transform.translation.z;
 }
 
 double BallisticSolver::simulate(double pitch_angle, double initial_vel, double target_dis, double target_hgt)
@@ -93,6 +103,7 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
   if (initial_vel <= 0.0 || target_dis <= 0.0)
     return 1e6;
   BallisticConfig config = *config_rt_buffer_.readFromRT();
+  //
   std::vector<double> state = { 0.0, 0.0, 0.0, initial_vel * std::cos(pitch_angle), 0.0, initial_vel * std::sin(pitch_angle) };
   double t = 0.0;
   double t_max = config.max_simulation_time;
@@ -103,17 +114,18 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
           config.abs_error_tolerance, config.rel_error_tolerance));
   double x_prev = 0.0, z_prev = 0.0;
   double x_curr = 0.0, z_curr = 0.0;
-  bool hit_target = false;
+  bool cross_target = false;
   double z_at_target = 0.0;
+  // Observer is called after each integration step to detect if target is overflown at the first time
   auto observer = [&](const std::vector<double>& s, double /* t */) {
     x_prev = x_curr;
     z_prev = z_curr;
     x_curr = s[0];
     z_curr = s[2];
-    if (!hit_target && x_prev < target_dis && x_curr >= target_dis)
+    if (!cross_target && x_prev < target_dis && x_curr >= target_dis)
     {
       z_at_target = z_prev + (z_curr - z_prev) * (target_dis - x_prev) / (x_curr - x_prev);
-      hit_target = true;
+      cross_target = true;
     }
   };
   auto system_func = [config](const std::vector<double>& state, std::vector<double>& dsdt, double t) {
@@ -138,9 +150,15 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
     dsdt[4] = ay;
     dsdt[5] = az;
   };
+  // Perform numerical integration from t=0 to t_max with max step size dt_max, calling observer at each step
   boost::numeric::odeint::integrate_const(controlled_stepper, system_func, state, t, t_max, dt_max, observer);
-  if (!hit_target)
-    z_at_target = state[2];
+  // After integration, if it's determined that the target was never overflown
+  if (!cross_target)
+  {
+    // Use trajectory slope of last two points to linearly extrapolate to target distance
+    double slope = (z_curr - z_prev) / (x_curr - x_prev);
+    z_at_target = z_prev + slope * (target_dis - x_prev);
+  }
   return z_at_target - target_hgt;
 }
 
