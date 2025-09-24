@@ -57,6 +57,7 @@
 #include <dynamic_reconfigure/server.h>
 #include <realtime_tools/realtime_publisher.h>
 #include <unordered_map>
+#include <std_msgs/Float32MultiArray.h>
 
 namespace rm_gimbal_controllers
 {
@@ -172,6 +173,7 @@ private:
   ros::Time last_publish_time_{};
   std::unordered_map<int, std::unique_ptr<realtime_tools::RealtimePublisher<rm_msgs::GimbalPosState>>> pos_state_pub_;
   std::shared_ptr<realtime_tools::RealtimePublisher<rm_msgs::GimbalDesError>> error_pub_;
+  std::shared_ptr<realtime_tools::RealtimePublisher<std_msgs::Float32MultiArray>> ballistic_solution_pub_;
   ros::Subscriber cmd_gimbal_sub_;
   ros::Subscriber data_track_sub_;
   realtime_tools::RealtimeBuffer<rm_msgs::GimbalCmd> cmd_rt_buffer_;
