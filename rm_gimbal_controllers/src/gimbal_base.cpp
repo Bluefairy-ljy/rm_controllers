@@ -65,7 +65,9 @@ bool Controller::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle& ro
   ros::NodeHandle chassis_vel_nh(controller_nh, "chassis_vel");
   chassis_vel_ = std::make_shared<ChassisVel>(chassis_vel_nh);
   ros::NodeHandle nh_bullet_solver = ros::NodeHandle(controller_nh, "bullet_solver");
+  ros::NodeHandle nh_ballistic_solver = ros::NodeHandle(controller_nh, "ballistic_solver");
   bullet_solver_ = std::make_shared<BulletSolver>(nh_bullet_solver);
+  ballistic_solver_ = std::make_shared<BallisticSolver>(nh_ballistic_solver);
 
   config_ = { .yaw_k_v_ = getParam(controller_nh, "controllers/yaw/k_v", 0.),
               .pitch_k_v_ = getParam(controller_nh, "controllers/pitch/k_v", 0.),
@@ -177,7 +179,7 @@ void Controller::update(const ros::Time& time, const ros::Duration& period)
     ROS_WARN_THROTTLE(5, "%s\n", ex.what());
     return;
   }
-  ballistic_solver_->getLaunchPoint(odom2base_,odom2gimbal_);
+  ballistic_solver_->getLaunchPoint(odom2gimbal_, odom2base_);
   updateChassisVel();
   if (state_ != cmd_gimbal_.mode)
   {
@@ -277,29 +279,42 @@ void Controller::track(const ros::Time& time)
   target_vel.x -= chassis_vel_->linear_->x();
   target_vel.y -= chassis_vel_->linear_->y();
   target_vel.z -= chassis_vel_->linear_->z();
-  bool solve_success = bullet_solver_->solve(target_pos, target_vel, cmd_gimbal_.bullet_speed, yaw, data_track_.v_yaw,
-                                             data_track_.radius_1, data_track_.radius_2, data_track_.dz,
-                                             data_track_.armors_num, chassis_vel_->angular_->z());
-  bullet_solver_->judgeShootBeforehand(time, data_track_.v_yaw);
-
-  if (publish_rate_ > 0.0 && last_publish_time_ + ros::Duration(1.0 / publish_rate_) < time)
+  bool solve_success = false;
+  double ballistic_yaw = 0.0, ballistic_pitch = 0.0;
+  if (data_track_.id == 12)
   {
-    if (error_pub_->trylock())
+    solve_success = ballistic_solver_->solver(data_track_, ballistic_yaw, ballistic_pitch);
+  }
+  else
+  {
+    solve_success = bullet_solver_->solve(target_pos, target_vel, cmd_gimbal_.bullet_speed, yaw, data_track_.v_yaw,
+                                          data_track_.radius_1, data_track_.radius_2, data_track_.dz,
+                                          data_track_.armors_num, chassis_vel_->angular_->z());
+    bullet_solver_->judgeShootBeforehand(time, data_track_.v_yaw);
+    if (publish_rate_ > 0.0 && last_publish_time_ + ros::Duration(1.0 / publish_rate_) < time)
     {
-      double error =
-          bullet_solver_->getGimbalError(target_pos, target_vel, data_track_.yaw, data_track_.v_yaw,
-                                         data_track_.radius_1, data_track_.radius_2, data_track_.dz,
-                                         data_track_.armors_num, yaw_compute, pitch_compute, cmd_gimbal_.bullet_speed);
-      error_pub_->msg_.stamp = time;
-      error_pub_->msg_.error = solve_success ? error : 1.0;
-      error_pub_->unlockAndPublish();
+      if (error_pub_->trylock())
+      {
+        double error = bullet_solver_->getGimbalError(target_pos, target_vel, data_track_.yaw, data_track_.v_yaw,
+                                                      data_track_.radius_1, data_track_.radius_2, data_track_.dz,
+                                                      data_track_.armors_num, yaw_compute, pitch_compute,
+                                                      cmd_gimbal_.bullet_speed);
+        error_pub_->msg_.stamp = time;
+        error_pub_->msg_.error = solve_success ? error : 1.0;
+        error_pub_->unlockAndPublish();
+      }
+      bullet_solver_->bulletModelPub(odom2gimbal_, time);
+      last_publish_time_ = time;
     }
-    bullet_solver_->bulletModelPub(odom2gimbal_, time);
-    last_publish_time_ = time;
   }
 
   if (solve_success)
-    setDes(time, bullet_solver_->getYaw(), bullet_solver_->getPitch());
+  {
+    if (data_track_.id == 12)
+      setDes(time, ballistic_yaw, ballistic_pitch);
+    else
+      setDes(time, bullet_solver_->getYaw(), bullet_solver_->getPitch());
+  }
   else
   {
     odom2gimbal_des_.header.stamp = time;

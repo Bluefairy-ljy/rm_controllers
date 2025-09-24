@@ -166,7 +166,7 @@ private:
   bool has_imu_ = true;
 
   std::shared_ptr<BulletSolver> bullet_solver_;
-  std::unique_ptr<BallisticSolver> ballistic_solver_;
+  std::shared_ptr<BallisticSolver> ballistic_solver_;
 
   // ROS Interface
   ros::Time last_publish_time_{};

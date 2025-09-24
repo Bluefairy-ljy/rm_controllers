@@ -103,7 +103,6 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
   if (initial_vel <= 0.0 || target_dis <= 0.0)
     return 1e6;
   BallisticConfig config = *config_rt_buffer_.readFromRT();
-  //
   std::vector<double> state = { 0.0, 0.0, 0.0, initial_vel * std::cos(pitch_angle), 0.0, initial_vel * std::sin(pitch_angle) };
   double t = 0.0;
   double t_max = config.max_simulation_time;

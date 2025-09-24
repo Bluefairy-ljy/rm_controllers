@@ -39,7 +39,7 @@ public:
    * @param odom2gimbal Transform from odometry frame to gimbal frame, including position and orientation.
    * @param odom2base Transform from odometry frame to base_link frame, including position and orientation.
    */
-  void BallisticSolver::getLaunchPoint(const geometry_msgs::TransformStamped& odom2gimbal,const geometry_msgs::TransformStamped& odom2base);
+  void getLaunchPoint(const geometry_msgs::TransformStamped& odom2gimbal,const geometry_msgs::TransformStamped& odom2base);
   /**
    * @brief Simulate trajectory and return vertical error at target distance
    * @param pitch_angle_ Launch pitch angle
