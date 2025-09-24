@@ -153,6 +153,8 @@ bool Controller::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle& ro
   data_track_sub_ = controller_nh.subscribe<rm_msgs::TrackData>("/track", 1, &Controller::trackCB, this);
   publish_rate_ = getParam(controller_nh, "publish_rate", 100.);
   error_pub_.reset(new realtime_tools::RealtimePublisher<rm_msgs::GimbalDesError>(controller_nh, "error", 100));
+  ballistic_solution_pub_.reset(
+      new realtime_tools::RealtimePublisher<std_msgs::Float32MultiArray>(controller_nh, "ballistic_solution", 100));
 
   return true;
 }
@@ -284,6 +286,16 @@ void Controller::track(const ros::Time& time)
   if (data_track_.id == 12)
   {
     solve_success = ballistic_solver_->solver(data_track_, ballistic_yaw, ballistic_pitch);
+    if (publish_rate_ > 0.0 && last_publish_time_ + ros::Duration(1.0 / publish_rate_) < time)
+    {
+      if (ballistic_solution_pub_->trylock())
+      {
+        ballistic_solution_pub_->msg_.data.emplace_back(ballistic_pitch);
+        ballistic_solution_pub_->msg_.data.emplace_back(ballistic_yaw);
+        ballistic_solution_pub_->unlockAndPublish();
+      }
+      last_publish_time_ = time;
+    }
   }
   else
   {
