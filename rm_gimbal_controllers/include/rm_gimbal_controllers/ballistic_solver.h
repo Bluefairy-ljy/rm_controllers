@@ -35,12 +35,6 @@ public:
   explicit BallisticSolver(ros::NodeHandle& nh);
   ~BallisticSolver() = default;
   /**
-   * @brief Calculate launch point
-   * @param odom2gimbal Transform from odometry frame to gimbal frame, including position and orientation.
-   * @param odom2base Transform from odometry frame to base_link frame, including position and orientation.
-   */
-  void getLaunchPoint(const geometry_msgs::TransformStamped& odom2gimbal,const geometry_msgs::TransformStamped& odom2base);
-  /**
    * @brief Simulate trajectory and return vertical error at target distance
    * @param pitch_angle_ Launch pitch angle
    * @param initial_vel_ Initial velocity
@@ -56,7 +50,7 @@ public:
    * @param pitch Output: desired pitch angle
    * @return true if solution converged
    */
-  bool solver(const rm_msgs::TrackData& track_data, double& yaw, double& pitch);
+  bool solver(const geometry_msgs::TransformStamped& odom2gimbal, const rm_msgs::TrackData& track_data, double& yaw, double& pitch);
   // Callback function
   void initialVelCB(const std_msgs::Float32::ConstPtr& msg);
 

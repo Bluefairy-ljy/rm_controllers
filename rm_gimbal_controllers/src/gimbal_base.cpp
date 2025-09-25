@@ -181,7 +181,6 @@ void Controller::update(const ros::Time& time, const ros::Duration& period)
     ROS_WARN_THROTTLE(5, "%s\n", ex.what());
     return;
   }
-  ballistic_solver_->getLaunchPoint(odom2gimbal_, odom2base_);
   updateChassisVel();
   if (state_ != cmd_gimbal_.mode)
   {
@@ -285,7 +284,7 @@ void Controller::track(const ros::Time& time)
   double ballistic_yaw = 0.0, ballistic_pitch = 0.0;
   if (data_track_.id == 12)
   {
-    solve_success = ballistic_solver_->solver(data_track_, ballistic_yaw, ballistic_pitch);
+    solve_success = ballistic_solver_->solver(odom2gimbal_, data_track_, ballistic_yaw, ballistic_pitch);
     if (publish_rate_ > 0.0 && last_publish_time_ + ros::Duration(1.0 / publish_rate_) < time)
     {
       if (ballistic_solution_pub_->trylock())

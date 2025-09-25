@@ -28,14 +28,14 @@ BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh)
   initial_vel_sub_ = controller_nh.subscribe<std_msgs::Float32>("/shoot_data", 1, &BallisticSolver::initialVelCB, this);
 }
 
-bool BallisticSolver::solver(const rm_msgs::TrackData& track_data, double& yaw, double& pitch)
+bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal, const rm_msgs::TrackData& track_data, double& yaw, double& pitch)
 {
   double initial_vel = *initial_vel_buffer_.readFromRT();
   double initial_pitch, final_pitch;
   geometry_msgs::Vector3 launch2target;
-  launch2target.x = track_data.position.x - launch_point_.x;
-  launch2target.y = track_data.position.y - launch_point_.y;
-  launch2target.z = track_data.position.z - launch_point_.z;
+  launch2target.x = track_data.position.x - odom2gimbal.transform.translation.x;
+  launch2target.y = track_data.position.y - odom2gimbal.transform.translation.y;
+  launch2target.z = track_data.position.z - odom2gimbal.transform.translation.z;
   double target_dis = std::sqrt(launch2target.x * launch2target.x + launch2target.y * launch2target.y) - config_.gun_len;
   double target_hgt = launch2target.z;
   yaw = std::atan2(launch2target.y, launch2target.x);
@@ -68,34 +68,6 @@ bool BallisticSolver::solver(const rm_msgs::TrackData& track_data, double& yaw, 
   }
   pitch = -final_pitch;
   return success;
-}
-
-/*void BallisticSolver::getLaunchPoint(const geometry_msgs::TransformStamped& odom2gimbal, const geometry_msgs::TransformStamped& odom2base)
-{
-  BallisticConfig config = *config_rt_buffer_.readFromRT();
-  double base_x = odom2base.transform.translation.x;
-  double base_y = odom2base.transform.translation.y;
-  double base_z = odom2base.transform.translation.z;
-  tf2::Quaternion q_base;
-  tf2::fromMsg(odom2base.transform.rotation, q_base);
-  double roll_base, pitch_base, yaw_base;
-  tf2::Matrix3x3(q_base).getRPY(roll_base, pitch_base, yaw_base);
-  tf2::Quaternion q_gimbal;
-  tf2::fromMsg(odom2gimbal.transform.rotation, q_gimbal);
-  double roll_gimbal, pitch_gimbal, yaw_gimbal;
-  tf2::Matrix3x3(q_gimbal).getRPY(roll_gimbal, pitch_gimbal, yaw_gimbal);
-  double cos_pitch = std::cos(pitch_gimbal);
-  double sin_pitch = std::sin(pitch_gimbal);
-  launch_point_.x = base_x + config.gun_len * cos_pitch * std::cos(yaw_base);
-  launch_point_.y = base_y + config.gun_len * cos_pitch * std::sin(yaw_base);
-  launch_point_.z = base_z + config.gun_len * sin_pitch;
-}*/
-
-void BallisticSolver::getLaunchPoint(const geometry_msgs::TransformStamped& odom2gimbal, const geometry_msgs::TransformStamped& odom2base)
-{
-  launch_point_.x = odom2gimbal.transform.translation.x;
-  launch_point_.y = odom2gimbal.transform.translation.y;
-  launch_point_.z = odom2gimbal.transform.translation.z;
 }
 
 double BallisticSolver::simulate(double pitch_angle, double initial_vel, double target_dis, double target_hgt)
