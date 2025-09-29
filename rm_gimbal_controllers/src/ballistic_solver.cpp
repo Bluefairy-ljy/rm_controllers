@@ -16,6 +16,8 @@ BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh)
               .air_density = getParam(controller_nh, "air_density", 1.2),
               .Re_crit = getParam(controller_nh, "Re_crit", 1e5),
               .g = getParam(controller_nh, "g", 9.81),
+              .initial_vel_near = getParam(controller_nh, "initial_vel_near", 14.0),
+              .initial_vel_far = getParam(controller_nh, "initial_vel_far", 15.8),
               .max_simulation_time = getParam(controller_nh, "max_simulation_time", 5.0),
               .max_integration_step = getParam(controller_nh, "max_integration_step", 0.01),
               .abs_error_tolerance = getParam(controller_nh, "abs_error_tolerance", 1e-6),
@@ -24,13 +26,10 @@ BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh)
   XmlRpc::XmlRpcValue lut_config;
   if (controller_nh.getParam("output_pitch_match", lut_config))
     output_pitch_match_lut_.init(lut_config);
-  initial_vel_buffer_.initRT(0.0);
-  initial_vel_sub_ = controller_nh.subscribe<std_msgs::Float32>("/shoot_data", 1, &BallisticSolver::initialVelCB, this);
 }
 
 bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal, const rm_msgs::TrackData& track_data, double& yaw, double& pitch)
 {
-  double initial_vel = *initial_vel_buffer_.readFromRT();
   double initial_pitch, final_pitch;
   geometry_msgs::Vector3 launch2target;
   launch2target.x = track_data.position.x - odom2gimbal.transform.translation.x;
@@ -38,6 +37,7 @@ bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal,
   launch2target.z = track_data.position.z - odom2gimbal.transform.translation.z;
   double target_dis = std::sqrt(launch2target.x * launch2target.x + launch2target.y * launch2target.y) - config_.gun_len;
   double target_hgt = launch2target.z;
+  double initial_vel = target_dis <= 16.5 ? config_.initial_vel_near : config_.initial_vel_far;
   yaw = std::atan2(launch2target.y, launch2target.x);
   // Use LUT to get initial guess.Originally defined: negative pitch indicates upward angle (head up)
   initial_pitch = -output_pitch_match_lut_.output(target_dis);
@@ -49,16 +49,16 @@ bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal,
   try
   {
     // Set search interval for root finding
-    double lower_bound = std::max(initial_pitch - 0.3, -M_PI/2 + 0.1);
-    double upper_bound = std::min(initial_pitch + 0.3,  M_PI/2 - 0.1);
-    boost::uintmax_t max_iterations = 15;
+    double lower_bound = std::max(initial_pitch - 0.5, -M_PI/2 + 0.1);
+    double upper_bound = std::min(initial_pitch + 0.5,  M_PI/2 - 0.1);
+    boost::uintmax_t max_iterations = 3;
     // Perform solving: find pitch_angle ∈ [lower_bound, upper_bound] such that error_function(pitch_angle) ≈ 0
     auto result = boost::math::tools::toms748_solve(error_function, lower_bound, upper_bound,
-                                                    boost::math::tools::eps_tolerance<double>(5), max_iterations);
+                                                    boost::math::tools::eps_tolerance<double>(2), max_iterations);
     // Take the midpoint of the solution interval as the final solution because TOMS748 returns a convergence interval
     final_pitch = (result.first + result.second) / 2.0;
     double final_error = error_function(final_pitch);
-    success = std::abs(final_error) < 0.05;
+    success = std::abs(final_error) < 0.2;
   }
   catch (const std::exception& e)
   {
@@ -79,10 +79,7 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
   double t = 0.0;
   double t_max = config.max_simulation_time;
   double dt_max = config.max_integration_step;
-  auto controlled_stepper = boost::numeric::odeint::controlled_runge_kutta<stepper_>(
-      boost::numeric::odeint::default_error_checker<double, boost::numeric::odeint::range_algebra,
-                                                    boost::numeric::odeint::default_operations>(
-          config.abs_error_tolerance, config.rel_error_tolerance));
+  stepper_ stepper;
   double x_prev = 0.0, z_prev = 0.0;
   double x_curr = 0.0, z_curr = 0.0;
   bool cross_target = false;
@@ -121,8 +118,7 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
     dsdt[4] = ay;
     dsdt[5] = az;
   };
-  // Perform numerical integration from t=0 to t_max with max step size dt_max, calling observer at each step
-  boost::numeric::odeint::integrate_const(controlled_stepper, system_func, state, t, t_max, dt_max, observer);
+ integrate_const(stepper, system_func, state, t, t_max, dt_max, observer);
   // After integration, if it's determined that the target was never overflown
   if (!cross_target)
   {
@@ -131,10 +127,5 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
     z_at_target = z_prev + slope * (target_dis - x_prev);
   }
   return z_at_target - target_hgt;
-}
-
-void BallisticSolver::initialVelCB(const std_msgs::Float32::ConstPtr& msg)
-{
-  initial_vel_buffer_.writeFromNonRT(msg->data);
 }
 }  // namespace rm_gimbal_controllers

@@ -4,19 +4,15 @@
 
 #pragma once
 
-#include <boost/numeric/odeint/stepper/runge_kutta_dopri5.hpp>
+#include <boost/numeric/odeint/stepper/runge_kutta4.hpp>
 #include <boost/numeric/odeint/integrate/integrate_const.hpp>
-#include <boost/numeric/odeint/stepper/generation/generation_controlled_runge_kutta.hpp>
 #include <boost/math/tools/toms748_solve.hpp>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
-#include <realtime_tools/realtime_publisher.h>
 #include <realtime_tools/realtime_buffer.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <geometry_msgs/PointStamped.h>
-#include <tf2/LinearMath/Matrix3x3.h>
 #include <dynamic_reconfigure/server.h>
-#include <rm_common/hardware_interface/robot_state_interface.h>
 #include <rm_common/linear_interpolation.h>
 #include <rm_common/ros_utilities.h>
 #include <rm_msgs/TrackData.h>
@@ -26,7 +22,7 @@ namespace rm_gimbal_controllers
 struct BallisticConfig
 {
   double mass, radius, gun_len, kinematic_viscosity, drag_coff, air_density, Re_crit, g;
-  double max_simulation_time, max_integration_step, abs_error_tolerance, rel_error_tolerance;
+  double initial_vel_near, initial_vel_far, max_simulation_time, max_integration_step, abs_error_tolerance, rel_error_tolerance;
 };
 
 class BallisticSolver
@@ -51,20 +47,15 @@ public:
    * @return true if solution converged
    */
   bool solver(const geometry_msgs::TransformStamped& odom2gimbal, const rm_msgs::TrackData& track_data, double& yaw, double& pitch);
-  // Callback function
-  void initialVelCB(const std_msgs::Float32::ConstPtr& msg);
 
 private:
-  BallisticConfig config_;
-  // ros subscriber
-  ros::Subscriber initial_vel_sub_;
+  BallisticConfig config_{};
   // real time buffer
   realtime_tools::RealtimeBuffer<BallisticConfig> config_rt_buffer_;
-  realtime_tools::RealtimeBuffer<double> initial_vel_buffer_;
   // member variable
   rm_common::LinearInterp output_pitch_match_lut_;
   geometry_msgs::Point launch_point_;
   // ODE stepper
-  typedef boost::numeric::odeint::runge_kutta_dopri5<std::vector<double>> stepper_;
+  typedef boost::numeric::odeint::runge_kutta4<std::vector<double>> stepper_;
 };
 }  // namespace rm_gimbal_controllers
