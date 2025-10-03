@@ -171,13 +171,13 @@ void Controller::update(const ros::Time& time, const ros::Duration& period)
 {
   cmd_gimbal_ = *cmd_rt_buffer_.readFromRT();
   data_track_ = *track_rt_buffer_.readFromNonRT();
-  /*odom2target_data_.position.x = 15;
+  odom2target_data_.position.x = 17.0;
   odom2target_data_.position.y = 0;
-  odom2target_data_.position.z = 1.0;
+  odom2target_data_.position.z = 0;
   odom2target_data_.id=8;
   odom2target_data_.header.frame_id="odom";
   odom2target_data_.tracking=true;
-  odom2target_data_.armors_num=1;*/
+  odom2target_data_.armors_num=1;
   config_ = *config_rt_buffer_.readFromRT();
   try
   {
@@ -300,7 +300,7 @@ void Controller::track(const ros::Time& time)
         std_msgs::Float32MultiArray data;
         data.data.emplace_back(ballistic_yaw);
         data.data.emplace_back(ballistic_pitch);
-        data.data.emplace_back(solve_success);
+        data.data.emplace_back(ballistic_solver_->used_fallback_);
         ballistic_solution_pub_->msg_.data = data.data;
         ballistic_solution_pub_->unlockAndPublish();
       }

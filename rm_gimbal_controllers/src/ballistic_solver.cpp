@@ -65,8 +65,9 @@ bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal,
   for (int iter = 0; iter < config_.max_newton_iterations; ++iter)
   {
     double h = config_.finite_difference_eps;
-    double f_plus = error_function(current_pitch + h);
-    double jacobian = (f_plus - error) / h;
+    double f_plus  = error_function(current_pitch + h);
+    double f_minus = error_function(current_pitch - h);
+    double jacobian = (f_plus - f_minus) / (2 * h);
     double delta = error / jacobian;
     delta = (delta < -config_.max_newton_step) ? -config_.max_newton_step :
             (delta > config_.max_newton_step)  ? config_.max_newton_step :
