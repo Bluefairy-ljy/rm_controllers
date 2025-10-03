@@ -6,7 +6,6 @@
 
 #include <boost/numeric/odeint/stepper/runge_kutta4.hpp>
 #include <boost/numeric/odeint/integrate/integrate_const.hpp>
-#include <boost/math/tools/toms748_solve.hpp>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
 #include <realtime_tools/realtime_buffer.h>
@@ -15,6 +14,7 @@
 #include <dynamic_reconfigure/server.h>
 #include <rm_common/linear_interpolation.h>
 #include <rm_common/ros_utilities.h>
+#include <rm_common/ori_tool.h>
 #include <rm_msgs/TrackData.h>
 
 namespace rm_gimbal_controllers
@@ -22,7 +22,9 @@ namespace rm_gimbal_controllers
 struct BallisticConfig
 {
   double mass, radius, gun_len, kinematic_viscosity, drag_coff, air_density, Re_crit, g;
-  double initial_vel_near, initial_vel_far, max_simulation_time, max_integration_step, abs_error_tolerance, rel_error_tolerance;
+  double initial_vel_near, initial_vel_far, max_simulation_time, max_integration_step;
+  double newton_convergence_tol, finite_difference_eps, max_newton_step;
+  int max_newton_iterations;
 };
 
 class BallisticSolver
@@ -30,6 +32,7 @@ class BallisticSolver
 public:
   explicit BallisticSolver(ros::NodeHandle& nh);
   ~BallisticSolver() = default;
+  bool used_fallback_;
   /**
    * @brief Simulate trajectory and return vertical error at target distance
    * @param pitch_angle_ Launch pitch angle

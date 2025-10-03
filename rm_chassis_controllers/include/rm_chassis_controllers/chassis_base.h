@@ -148,11 +148,9 @@ protected:
 
   double wheel_radius_{}, publish_rate_{}, twist_angular_{}, timeout_{}, effort_coeff_{}, velocity_coeff_{},
       power_offset_{};
-  double roll_ = 0., pitch_ = 0., yaw_ = 0.;
-  double pitch_angle_threshold_ = 0., scale_ = 0.;
   double max_odom_vel_;
-  bool enable_uphill_acceleration_ = false;
   bool enable_odom_tf_ = false;
+  bool enable_map_tf_ = false;
   bool topic_update_ = false;
   bool publish_odom_tf_ = false;
   bool state_changed_ = true;
@@ -167,13 +165,13 @@ protected:
   std::string follow_source_frame_{}, command_source_frame_{};
 
   ros::Time last_publish_time_;
-  geometry_msgs::TransformStamped odom2base_{};
-  tf2::Transform world2odom_;
+  geometry_msgs::TransformStamped odom2base_{}, map2odom_{}, map2lio_{};
+  tf2::Transform camera_init2odom_;
   geometry_msgs::Vector3 vel_cmd_{};  // x, y
   control_toolbox::Pid pid_follow_;
 
   std::shared_ptr<realtime_tools::RealtimePublisher<nav_msgs::Odometry> > odom_pub_;
-  rm_common::TfRtBroadcaster tf_broadcaster_{};
+  rm_common::TfRtBroadcaster tf_broadcaster_{}, tf_broadcaster_map2odom_{}, tf_broadcaster_lio_{};
   ros::Subscriber outside_odom_sub_;
   ros::Subscriber cmd_chassis_sub_;
   ros::Subscriber cmd_vel_sub_;

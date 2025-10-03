@@ -6,7 +6,7 @@
 
 namespace rm_gimbal_controllers
 {
-BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh)
+BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh) : used_fallback_(false)
 {
   config_ = { .mass = getParam(controller_nh, "mass", 0.0445),
               .radius = getParam(controller_nh, "radius", 0.02125),
@@ -20,8 +20,10 @@ BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh)
               .initial_vel_far = getParam(controller_nh, "initial_vel_far", 15.8),
               .max_simulation_time = getParam(controller_nh, "max_simulation_time", 5.0),
               .max_integration_step = getParam(controller_nh, "max_integration_step", 0.01),
-              .abs_error_tolerance = getParam(controller_nh, "abs_error_tolerance", 1e-6),
-              .rel_error_tolerance = getParam(controller_nh, "rel_error_tolerance", 1e-6) };
+              .newton_convergence_tol = getParam(controller_nh, "newton_convergence_tol", 2e-5),
+              .finite_difference_eps = getParam(controller_nh, "finite_difference_eps", 1e-6),
+              .max_newton_step = getParam(controller_nh, "max_newton_step", 0.1),
+              .max_newton_iterations = getParam(controller_nh, "max_newton_iterations", 2)};
   config_rt_buffer_.initRT(config_);
   XmlRpc::XmlRpcValue lut_config;
   if (controller_nh.getParam("output_pitch_match", lut_config))
@@ -30,44 +32,61 @@ BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh)
 
 bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal, const rm_msgs::TrackData& track_data, double& yaw, double& pitch)
 {
-  double initial_pitch, final_pitch;
   geometry_msgs::Vector3 launch2target;
-  launch2target.x = track_data.position.x - odom2gimbal.transform.translation.x;
-  launch2target.y = track_data.position.y - odom2gimbal.transform.translation.y;
-  launch2target.z = track_data.position.z - odom2gimbal.transform.translation.z;
+  launch2target.x = 18;
+  launch2target.y = 0;
+  launch2target.z = 1.2 - 0.513468 +0.05;
   double target_dis = std::sqrt(launch2target.x * launch2target.x + launch2target.y * launch2target.y) - config_.gun_len;
   double target_hgt = launch2target.z;
   double initial_vel = target_dis <= 16.5 ? config_.initial_vel_near : config_.initial_vel_far;
+  std::cout << "target_dis" << target_dis << std::endl << "target_hgt" << target_hgt << std::endl;
+  std::cout << launch2target.x << "   " << launch2target.y << "   " << launch2target.z << std::endl;
   yaw = std::atan2(launch2target.y, launch2target.x);
+  std::cout << "yaw: " << yaw << std::endl;
   // Use LUT to get initial guess.Originally defined: negative pitch indicates upward angle (head up)
-  initial_pitch = -output_pitch_match_lut_.output(target_dis);
+  double initial_pitch = -output_pitch_match_lut_.output(target_dis);
+  std::cout << "initial_pitch: " << initial_pitch << std::endl;
   // Error function for root finding
   auto error_function = [&](double pitch_angle) -> double {
     return simulate(pitch_angle, initial_vel, target_dis, target_hgt);
   };
-  bool success = false;
-  try
+  used_fallback_ = true;
+  double current_pitch = initial_pitch;
+  double error = error_function(current_pitch);
+  // Check if initial guess is already good enough
+  if (std::abs(error) < config_.newton_convergence_tol)
   {
-    // Set search interval for root finding
-    double lower_bound = std::max(initial_pitch - 0.5, -M_PI/2 + 0.1);
-    double upper_bound = std::min(initial_pitch + 0.5,  M_PI/2 - 0.1);
-    boost::uintmax_t max_iterations = 3;
-    // Perform solving: find pitch_angle ∈ [lower_bound, upper_bound] such that error_function(pitch_angle) ≈ 0
-    auto result = boost::math::tools::toms748_solve(error_function, lower_bound, upper_bound,
-                                                    boost::math::tools::eps_tolerance<double>(2), max_iterations);
-    // Take the midpoint of the solution interval as the final solution because TOMS748 returns a convergence interval
-    final_pitch = (result.first + result.second) / 2.0;
-    double final_error = error_function(final_pitch);
-    success = std::abs(final_error) < 0.2;
+    std::cout<<"initial pitch is well"<<std::endl;
+    pitch = -initial_pitch;
+    used_fallback_ = false;
+    return true;
   }
-  catch (const std::exception& e)
+  // Newton iteration
+  for (int iter = 0; iter < config_.max_newton_iterations; ++iter)
   {
-    ROS_WARN_THROTTLE(1.0, "%s", e.what());
-    final_pitch = initial_pitch;
-    success = false;
+    double h = config_.finite_difference_eps;
+    double f_plus = error_function(current_pitch + h);
+    double jacobian = (f_plus - error) / h;
+    double delta = error / jacobian;
+    delta = (delta < -config_.max_newton_step) ? -config_.max_newton_step :
+            (delta > config_.max_newton_step)  ? config_.max_newton_step :
+                                                 delta;
+    double update_pitch = current_pitch - delta;
+    double update_error = error_function(update_pitch);
+    // Check convergence after update
+    if (std::abs(update_error) < config_.newton_convergence_tol)
+    {
+      pitch = -update_pitch;
+      used_fallback_ = false;
+      return true;
+    }
+    // Update for next iteration
+    current_pitch = update_pitch;
+    error = update_error;
+    std::cout<<"newton"<<std::endl;
   }
-  pitch = -final_pitch;
-  return success;
+  pitch = -initial_pitch;
+  return true;
 }
 
 double BallisticSolver::simulate(double pitch_angle, double initial_vel, double target_dis, double target_hgt)
@@ -106,8 +125,8 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
     double ax = 0.0, ay = 0.0, az = -config.g;
     if (speed > 1e-5)
     {
-      double Re = speed * 2.0 * config.radius / config.kinematic_viscosity;
-      double Cd = (Re < config.Re_crit) ? 0.44 * config.drag_coff : 0.2;
+      //double Re = speed * 2.0 * config.radius / config.kinematic_viscosity;
+      double Cd = 0.37;
       double F_drag = 0.5 * config.air_density * Cd * M_PI * config.radius * config.radius * speed * speed;
       double inv_speed = 1.0 / speed;
       ax += (-F_drag * vx * inv_speed) / config.mass;
