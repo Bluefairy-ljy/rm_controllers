@@ -9,21 +9,20 @@ namespace rm_gimbal_controllers
 BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh) : used_fallback_(false)
 {
   config_ = { .mass = getParam(controller_nh, "mass", 0.0445),
-              .radius = getParam(controller_nh, "radius", 0.02125),
-              .gun_len = getParam(controller_nh, "gun_len", 0.0),
-              .kinematic_viscosity = getParam(controller_nh, "kinematic_viscosity", 1.5e-5),
-              .drag_coff = getParam(controller_nh, "drag_coff", 0.5),
-              .air_density = getParam(controller_nh, "air_density", 1.2),
-              .Re_crit = getParam(controller_nh, "Re_crit", 1e5),
-              .g = getParam(controller_nh, "g", 9.81),
-              .initial_vel_near = getParam(controller_nh, "initial_vel_near", 14.0),
-              .initial_vel_far = getParam(controller_nh, "initial_vel_far", 15.8),
-              .max_simulation_time = getParam(controller_nh, "max_simulation_time", 5.0),
-              .max_integration_step = getParam(controller_nh, "max_integration_step", 0.01),
-              .newton_convergence_tol = getParam(controller_nh, "newton_convergence_tol", 2e-5),
-              .finite_difference_eps = getParam(controller_nh, "finite_difference_eps", 1e-6),
-              .max_newton_step = getParam(controller_nh, "max_newton_step", 0.1),
-              .max_newton_iterations = getParam(controller_nh, "max_newton_iterations", 2)};
+                .radius = getParam(controller_nh, "radius", 0.02125),
+                .gun_len = getParam(controller_nh, "gun_len", 0.08),
+                .drag_coff= getParam(controller_nh, "drag_coff", 1.2),
+                .Cd = getParam(controller_nh, "Cd", 0.4),
+                .air_density = getParam(controller_nh, "air_density", 1.2),
+                .g = getParam(controller_nh, "g", 9.81),
+                .initial_vel_near = getParam(controller_nh, "initial_vel_near", 14.0),
+                .initial_vel_far = getParam(controller_nh, "initial_vel_far", 15.7),
+                .max_simulation_time = getParam(controller_nh, "max_simulation_time", 2.5),
+                .max_integration_step = getParam(controller_nh, "max_integration_step", 0.01),
+                .newton_convergence_tol = getParam(controller_nh, "newton_convergence_tol", 2e-5),
+                .finite_difference_eps = getParam(controller_nh, "finite_difference_eps", 1e-4),
+                .max_newton_step = getParam(controller_nh, "max_newton_step", 0.04),
+                .max_newton_iterations = getParam(controller_nh, "max_newton_iterations", 2)};
   config_rt_buffer_.initRT(config_);
   XmlRpc::XmlRpcValue lut_config;
   if (controller_nh.getParam("output_pitch_match", lut_config))
@@ -33,7 +32,7 @@ BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh) : used_fallback
 bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal, const rm_msgs::TrackData& track_data, double& yaw, double& pitch)
 {
   geometry_msgs::Vector3 launch2target;
-  launch2target.x = 18;
+  launch2target.x = 17;
   launch2target.y = 0;
   launch2target.z = 1.2 - 0.513468 +0.05;
   double target_dis = std::sqrt(launch2target.x * launch2target.x + launch2target.y * launch2target.y) - config_.gun_len;
@@ -66,8 +65,9 @@ bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal,
   {
     double h = config_.finite_difference_eps;
     double f_plus  = error_function(current_pitch + h);
-    double f_minus = error_function(current_pitch - h);
-    double jacobian = (f_plus - f_minus) / (2 * h);
+    //double f_minus = error_function(current_pitch - h);
+    //double jacobian = (f_plus - f_minus) / (2 * h);
+    double jacobian= (f_plus - error) / h;
     double delta = error / jacobian;
     delta = (delta < -config_.max_newton_step) ? -config_.max_newton_step :
             (delta > config_.max_newton_step)  ? config_.max_newton_step :
@@ -95,7 +95,7 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
   if (initial_vel <= 0.0 || target_dis <= 0.0)
     return 1e6;
   BallisticConfig config = *config_rt_buffer_.readFromRT();
-  std::vector<double> state = { 0.0, 0.0, 0.0, initial_vel * std::cos(pitch_angle), 0.0, initial_vel * std::sin(pitch_angle) };
+  std::array<double, 6> state = {{0.0, 0.0, 0.0,initial_vel * std::cos(pitch_angle),0.0,initial_vel * std::sin(pitch_angle)}};
   double t = 0.0;
   double t_max = config.max_simulation_time;
   double dt_max = config.max_integration_step;
@@ -105,7 +105,7 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
   bool cross_target = false;
   double z_at_target = 0.0;
   // Observer is called after each integration step to detect if target is overflown at the first time
-  auto observer = [&](const std::vector<double>& s, double /* t */) {
+  auto observer = [&](const std::array<double, 6>& s, double /* t */) {
     x_prev = x_curr;
     z_prev = z_curr;
     x_curr = s[0];
@@ -116,19 +116,16 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
       cross_target = true;
     }
   };
-  auto system_func = [config](const std::vector<double>& state, std::vector<double>& dsdt, double t) {
+  auto system_func = [config](const std::array<double, 6>& state, std::array<double, 6>& dsdt, double t) {
     double vx = state[3], vy = state[4], vz = state[5];
-    double speed = std::sqrt(vx * vx + vy * vy + vz * vz);
-    dsdt.assign(6, 0.0);
     dsdt[0] = vx;
     dsdt[1] = vy;
     dsdt[2] = vz;
     double ax = 0.0, ay = 0.0, az = -config.g;
-    if (speed > 1e-5)
-    {
-      //double Re = speed * 2.0 * config.radius / config.kinematic_viscosity;
-      double Cd = 0.37;
-      double F_drag = 0.5 * config.air_density * Cd * M_PI * config.radius * config.radius * speed * speed;
+    double speed_sq = vx*vx + vy*vy + vz*vz;
+    if (speed_sq > 1e-10) {
+      double speed = std::sqrt(speed_sq);
+      double F_drag = config.drag_coff * 0.5 * config.air_density * config.Cd * M_PI * config.radius * config.radius * speed_sq;
       double inv_speed = 1.0 / speed;
       ax += (-F_drag * vx * inv_speed) / config.mass;
       ay += (-F_drag * vy * inv_speed) / config.mass;

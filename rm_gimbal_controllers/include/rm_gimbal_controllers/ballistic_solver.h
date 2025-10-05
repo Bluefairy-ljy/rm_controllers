@@ -15,13 +15,14 @@
 #include <rm_common/linear_interpolation.h>
 #include <rm_common/ros_utilities.h>
 #include <rm_common/ori_tool.h>
+#include <rm_msgs/ShootData.h>
 #include <rm_msgs/TrackData.h>
 
 namespace rm_gimbal_controllers
 {
 struct BallisticConfig
 {
-  double mass, radius, gun_len, kinematic_viscosity, drag_coff, air_density, Re_crit, g;
+  double mass, radius, gun_len, drag_coff, Cd, air_density, g;
   double initial_vel_near, initial_vel_far, max_simulation_time, max_integration_step;
   double newton_convergence_tol, finite_difference_eps, max_newton_step;
   int max_newton_iterations;
@@ -59,6 +60,6 @@ private:
   rm_common::LinearInterp output_pitch_match_lut_;
   geometry_msgs::Point launch_point_;
   // ODE stepper
-  typedef boost::numeric::odeint::runge_kutta4<std::vector<double>> stepper_;
+  typedef boost::numeric::odeint::runge_kutta4<std::array<double, 6>> stepper_;
 };
 }  // namespace rm_gimbal_controllers
