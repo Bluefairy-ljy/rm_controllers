@@ -12,6 +12,7 @@
 #include <geometry_msgs/TransformStamped.h>
 #include <geometry_msgs/PointStamped.h>
 #include <dynamic_reconfigure/server.h>
+#include <rm_gimbal_controllers/BallisticSolverConfig.h>
 #include <rm_common/linear_interpolation.h>
 #include <rm_common/ros_utilities.h>
 #include <rm_common/ori_tool.h>
@@ -25,6 +26,7 @@ struct BallisticConfig
   double mass, radius, gun_len, drag_coff, Cd, air_density, g;
   double initial_vel_near, initial_vel_far, max_simulation_time, max_integration_step;
   double newton_convergence_tol, finite_difference_eps, max_newton_step;
+  double debug_x, debug_y, debug_z;
   int max_newton_iterations;
 };
 
@@ -33,7 +35,7 @@ class BallisticSolver
 public:
   explicit BallisticSolver(ros::NodeHandle& nh);
   ~BallisticSolver() = default;
-  bool used_fallback_;
+  bool used_fallback_ = false;
   /**
    * @brief Simulate trajectory and return vertical error at target distance
    * @param pitch_angle_ Launch pitch angle
@@ -51,14 +53,18 @@ public:
    * @return true if solution converged
    */
   bool solver(const geometry_msgs::TransformStamped& odom2gimbal, const rm_msgs::TrackData& track_data, double& yaw, double& pitch);
+  void reconfigCB(rm_gimbal_controllers::BallisticSolverConfig& config, uint32_t);
 
 private:
+  dynamic_reconfigure::Server<rm_gimbal_controllers::BallisticSolverConfig>* d_srv_{};
   BallisticConfig config_{};
   // real time buffer
   realtime_tools::RealtimeBuffer<BallisticConfig> config_rt_buffer_;
   // member variable
   rm_common::LinearInterp output_pitch_match_lut_;
   geometry_msgs::Point launch_point_;
+  bool used_debug_ = false;
+  bool dynamic_reconfig_initialized_{};
   // ODE stepper
   typedef boost::numeric::odeint::runge_kutta4<std::array<double, 6>> stepper_;
 };
