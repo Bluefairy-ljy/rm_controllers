@@ -6,7 +6,7 @@
 
 namespace rm_gimbal_controllers
 {
-BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh) : used_fallback_(false)
+BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh)
 {
   config_ = { .mass = getParam(controller_nh, "mass", 0.0445),
                 .radius = getParam(controller_nh, "radius", 0.02125),
@@ -22,22 +22,38 @@ BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh) : used_fallback
                 .newton_convergence_tol = getParam(controller_nh, "newton_convergence_tol", 2e-5),
                 .finite_difference_eps = getParam(controller_nh, "finite_difference_eps", 1e-4),
                 .max_newton_step = getParam(controller_nh, "max_newton_step", 0.04),
+                .debug_x = getParam(controller_nh, "debug_x", 0.0),
+                .debug_y = getParam(controller_nh, "debug_y", 0.0),
+                .debug_z = getParam(controller_nh, "debug_z", 0.0),
                 .max_newton_iterations = getParam(controller_nh, "max_newton_iterations", 2)};
+  used_debug_=getParam(controller_nh, "used_debug", false);
   config_rt_buffer_.initRT(config_);
   XmlRpc::XmlRpcValue lut_config;
   if (controller_nh.getParam("output_pitch_match", lut_config))
     output_pitch_match_lut_.init(lut_config);
+  d_srv_ = new dynamic_reconfigure::Server<rm_gimbal_controllers::BallisticSolverConfig>(controller_nh);
+  dynamic_reconfigure::Server<rm_gimbal_controllers::BallisticSolverConfig>::CallbackType cb =
+      [this](auto&& PH1, auto&& PH2) { reconfigCB(PH1, PH2); };
+  d_srv_->setCallback(cb);
 }
 
 bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal, const rm_msgs::TrackData& track_data, double& yaw, double& pitch)
 {
+  BallisticConfig config = *config_rt_buffer_.readFromRT();
   geometry_msgs::Vector3 launch2target;
-  launch2target.x = 17;
-  launch2target.y = 0;
-  launch2target.z = 1.2 - 0.513468 +0.05;
-  double target_dis = std::sqrt(launch2target.x * launch2target.x + launch2target.y * launch2target.y) - config_.gun_len;
-  double target_hgt = launch2target.z;
-  double initial_vel = target_dis <= 16.5 ? config_.initial_vel_near : config_.initial_vel_far;
+  if (used_debug_) {
+    launch2target.x = config.debug_x;
+    launch2target.y = config.debug_y;
+    launch2target.z = config.debug_z;
+  }else {
+    launch2target.x = track_data.position.x - odom2gimbal.transform.translation.x;
+    launch2target.y = track_data.position.y - odom2gimbal.transform.translation.y;
+    launch2target.z = track_data.position.z - odom2gimbal.transform.translation.z;
+  }
+  double target_dis = std::sqrt(launch2target.x * launch2target.x + launch2target.y * launch2target.y)-0.08;
+  double target_hgt = launch2target.z-0.05;
+  double initial_vel = target_dis <= 16.5 ? config.initial_vel_near : config.initial_vel_far;
+  std::cout<<"initial_vel: "<<initial_vel<<std::endl;
   std::cout << "target_dis" << target_dis << std::endl << "target_hgt" << target_hgt << std::endl;
   std::cout << launch2target.x << "   " << launch2target.y << "   " << launch2target.z << std::endl;
   yaw = std::atan2(launch2target.y, launch2target.x);
@@ -53,7 +69,7 @@ bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal,
   double current_pitch = initial_pitch;
   double error = error_function(current_pitch);
   // Check if initial guess is already good enough
-  if (std::abs(error) < config_.newton_convergence_tol)
+  if (std::abs(error) < config.newton_convergence_tol)
   {
     std::cout<<"initial pitch is well"<<std::endl;
     pitch = -initial_pitch;
@@ -61,21 +77,21 @@ bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal,
     return true;
   }
   // Newton iteration
-  for (int iter = 0; iter < config_.max_newton_iterations; ++iter)
+  for (int iter = 0; iter < config.max_newton_iterations; ++iter)
   {
-    double h = config_.finite_difference_eps;
+    double h = config.finite_difference_eps;
     double f_plus  = error_function(current_pitch + h);
     //double f_minus = error_function(current_pitch - h);
     //double jacobian = (f_plus - f_minus) / (2 * h);
     double jacobian= (f_plus - error) / h;
     double delta = error / jacobian;
-    delta = (delta < -config_.max_newton_step) ? -config_.max_newton_step :
-            (delta > config_.max_newton_step)  ? config_.max_newton_step :
+    delta = (delta < -config.max_newton_step) ? -config.max_newton_step :
+            (delta > config.max_newton_step)  ? config.max_newton_step :
                                                  delta;
     double update_pitch = current_pitch - delta;
     double update_error = error_function(update_pitch);
     // Check convergence after update
-    if (std::abs(update_error) < config_.newton_convergence_tol)
+    if (std::abs(update_error) < config.newton_convergence_tol)
     {
       pitch = -update_pitch;
       used_fallback_ = false;
@@ -98,34 +114,20 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
   std::array<double, 6> state = {{0.0, 0.0, 0.0,initial_vel * std::cos(pitch_angle),0.0,initial_vel * std::sin(pitch_angle)}};
   double t = 0.0;
   double t_max = config.max_simulation_time;
-  double dt_max = config.max_integration_step;
+  double dt = config.max_integration_step;
   stepper_ stepper;
   double x_prev = 0.0, z_prev = 0.0;
   double x_curr = 0.0, z_curr = 0.0;
-  bool cross_target = false;
   double z_at_target = 0.0;
-  // Observer is called after each integration step to detect if target is overflown at the first time
-  auto observer = [&](const std::array<double, 6>& s, double /* t */) {
-    x_prev = x_curr;
-    z_prev = z_curr;
-    x_curr = s[0];
-    z_curr = s[2];
-    if (!cross_target && x_prev < target_dis && x_curr >= target_dis)
-    {
-      z_at_target = z_prev + (z_curr - z_prev) * (target_dis - x_prev) / (x_curr - x_prev);
-      cross_target = true;
-    }
-  };
   auto system_func = [config](const std::array<double, 6>& state, std::array<double, 6>& dsdt, double t) {
     double vx = state[3], vy = state[4], vz = state[5];
+    double speed = std::sqrt(vx * vx + vy * vy + vz * vz);
     dsdt[0] = vx;
     dsdt[1] = vy;
     dsdt[2] = vz;
     double ax = 0.0, ay = 0.0, az = -config.g;
-    double speed_sq = vx*vx + vy*vy + vz*vz;
-    if (speed_sq > 1e-10) {
-      double speed = std::sqrt(speed_sq);
-      double F_drag = config.drag_coff * 0.5 * config.air_density * config.Cd * M_PI * config.radius * config.radius * speed_sq;
+    if (speed > 1e-5) {
+      double F_drag = config.drag_coff * 0.5 * config.air_density * config.Cd * M_PI * config.radius * config.radius * speed * speed;
       double inv_speed = 1.0 / speed;
       ax += (-F_drag * vx * inv_speed) / config.mass;
       ay += (-F_drag * vy * inv_speed) / config.mass;
@@ -135,14 +137,69 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
     dsdt[4] = ay;
     dsdt[5] = az;
   };
- integrate_const(stepper, system_func, state, t, t_max, dt_max, observer);
-  // After integration, if it's determined that the target was never overflown
-  if (!cross_target)
+  while (t < t_max && state[0] < target_dis)
   {
-    // Use trajectory slope of last two points to linearly extrapolate to target distance
-    double slope = (z_curr - z_prev) / (x_curr - x_prev);
-    z_at_target = z_prev + slope * (target_dis - x_prev);
+    x_prev = x_curr;
+    z_prev = z_curr;
+    x_curr = state[0];
+    z_curr = state[2];
+    stepper.do_step(system_func, state, t, dt);
+    t += dt;
   }
+  if (state[0] >= target_dis) {
+    z_at_target = z_prev + (z_curr - z_prev) * (target_dis - x_prev) / (x_curr - x_prev);
+    std::cout<<t<<std::endl;
+  }
+  std::cout << "z_at_target = " << z_at_target << std::endl;
   return z_at_target - target_hgt;
+}
+
+void BallisticSolver::reconfigCB(rm_gimbal_controllers::BallisticSolverConfig& config, uint32_t /*unused*/)
+{
+  ROS_INFO("[Ballistic Solver] Dynamic params changed");
+  if (!dynamic_reconfig_initialized_)
+  {
+    BallisticConfig init_config = *config_rt_buffer_.readFromNonRT();  // config init from YAML
+    config.mass = init_config.mass;
+    config.radius = init_config.radius;
+    config.gun_len = init_config.gun_len;
+    config.drag_coff = init_config.drag_coff;
+    config.Cd = init_config.Cd;
+    config.air_density = init_config.air_density;
+    config.g = init_config.g;
+    config.initial_vel_near = init_config.initial_vel_near;
+    config.initial_vel_far = init_config.initial_vel_far;
+    config.max_simulation_time = init_config.max_simulation_time;
+    config.max_integration_step = init_config.max_integration_step;
+    config.newton_convergence_tol = init_config.newton_convergence_tol;
+    config.finite_difference_eps = init_config.finite_difference_eps;
+    config.max_newton_step = init_config.max_newton_step;
+    config.debug_x = init_config.debug_x;
+    config.debug_y = init_config.debug_y;
+    config.debug_z = init_config.debug_z;
+    config.max_newton_iterations = init_config.max_newton_iterations;
+    dynamic_reconfig_initialized_ = true;
+  }
+  BallisticConfig config_non_rt{
+      .mass = config.mass,
+      .radius = config.radius,
+      .gun_len = config.gun_len,
+      .drag_coff = config.drag_coff,
+      .Cd = config.Cd,
+      .air_density = config.air_density,
+      .g = config.g,
+      .initial_vel_near = config.initial_vel_near,
+      .initial_vel_far = config.initial_vel_far,
+      .max_simulation_time = config.max_simulation_time,
+      .max_integration_step = config.max_integration_step,
+      .newton_convergence_tol = config.newton_convergence_tol,
+      .finite_difference_eps = config.finite_difference_eps,
+      .max_newton_step = config.max_newton_step,
+      .debug_x = config.debug_x,
+      .debug_y = config.debug_y,
+      .debug_z = config.debug_z,
+      .max_newton_iterations = config.max_newton_iterations,
+  };
+  config_rt_buffer_.writeFromNonRT(config_non_rt);
 }
 }  // namespace rm_gimbal_controllers
