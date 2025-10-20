@@ -439,7 +439,21 @@ void ChassisBase<T...>::powerLimit()
   for (auto joint : joint_handles_)
     if (joint.getName().find("wheel") != std::string::npos)
     {
-      joint.setCommand(zoom_coeff > 1 ? joint.getCommand() : joint.getCommand() * zoom_coeff);
+      if (pitch_ < pitch_angle_threshold_ && enable_uphill_acceleration_)
+      {
+        if (joint.getName().find("back") != std::string::npos)
+        {
+          joint.setCommand(zoom_coeff > 1 ? joint.getCommand() : joint.getCommand() * zoom_coeff * scale_);
+        }
+        if (joint.getName().find("front") != std::string::npos)
+        {
+          joint.setCommand(zoom_coeff > 1 ? joint.getCommand() : joint.getCommand() * zoom_coeff);
+        }
+      }
+      else
+      {
+        joint.setCommand(zoom_coeff > 1 ? joint.getCommand() : joint.getCommand() * zoom_coeff);
+      }
     }
 }
 
