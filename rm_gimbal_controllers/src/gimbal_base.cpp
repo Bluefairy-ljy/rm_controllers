@@ -171,13 +171,7 @@ void Controller::update(const ros::Time& time, const ros::Duration& period)
 {
   cmd_gimbal_ = *cmd_rt_buffer_.readFromRT();
   data_track_ = *track_rt_buffer_.readFromNonRT();
-  odom2target_data_.position.x = 17.0;
-  odom2target_data_.position.y = 0;
-  odom2target_data_.position.z = 0;
-  odom2target_data_.id=8;
-  odom2target_data_.header.frame_id="odom";
-  odom2target_data_.tracking=true;
-  odom2target_data_.armors_num=1;
+  odom2target_data_= *odom2target_data_rt_buffer_.readFromRT();
   config_ = *config_rt_buffer_.readFromRT();
   try
   {
