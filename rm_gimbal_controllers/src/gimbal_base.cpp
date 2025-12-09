@@ -41,7 +41,6 @@
 #include <rm_common/ros_utilities.h>
 #include <rm_common/ori_tool.h>
 #include <pluginlib/class_list_macros.hpp>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <tf/transform_datatypes.h>
 
 namespace rm_gimbal_controllers
@@ -151,7 +150,8 @@ bool Controller::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle& ro
 
   cmd_gimbal_sub_ = controller_nh.subscribe<rm_msgs::GimbalCmd>("command", 1, &Controller::commandCB, this);
   data_track_sub_ = controller_nh.subscribe<rm_msgs::TrackData>("/track", 1, &Controller::trackCB, this);
-  odom2target_data_sub_ = controller_nh.subscribe<rm_msgs::TrackData>("/odom2target", 1, &Controller::odom2targetDataCB, this);
+  ballistic_track_sub_ = controller_nh.subscribe<std_msgs::Bool>("/use_lio", 1, &Controller::ballisticTrackCB, this);
+  base2target_data_sub_ = controller_nh.subscribe<rm_msgs::TrackData>("/base2target", 1, &Controller::base2targetDataCB, this);
   publish_rate_ = getParam(controller_nh, "publish_rate", 100.);
   error_pub_.reset(new realtime_tools::RealtimePublisher<rm_msgs::GimbalDesError>(controller_nh, "error", 100));
   ballistic_solution_pub_.reset(
@@ -171,18 +171,20 @@ void Controller::update(const ros::Time& time, const ros::Duration& period)
 {
   cmd_gimbal_ = *cmd_rt_buffer_.readFromRT();
   data_track_ = *track_rt_buffer_.readFromNonRT();
-  odom2target_data_= *odom2target_data_rt_buffer_.readFromRT();
+  base2target_data_= *base2target_data_rt_buffer_.readFromRT();
   config_ = *config_rt_buffer_.readFromRT();
   try
   {
     odom2gimbal_ = robot_state_handle_.lookupTransform("odom", odom2gimbal_.child_frame_id, time);
     odom2base_ = robot_state_handle_.lookupTransform("odom", odom2base_.child_frame_id, time);
+    base2gimbal_ = robot_state_handle_.lookupTransform("base_link","pitch",time);
   }
   catch (tf2::TransformException& ex)
   {
     ROS_WARN_THROTTLE(5, "%s\n", ex.what());
     return;
   }
+  updateBallisticSolution(time);
   updateChassisVel();
   if (state_ != cmd_gimbal_.mode)
   {
@@ -282,58 +284,29 @@ void Controller::track(const ros::Time& time)
   target_vel.x -= chassis_vel_->linear_->x();
   target_vel.y -= chassis_vel_->linear_->y();
   target_vel.z -= chassis_vel_->linear_->z();
-  bool solve_success = false;
-  double ballistic_yaw = 0.0, ballistic_pitch = 0.0;
-  if (odom2target_data_.id == 8)
+  bool solve_success = bullet_solver_->solve(target_pos, target_vel, cmd_gimbal_.bullet_speed, yaw, data_track_.v_yaw,
+                                             data_track_.radius_1, data_track_.radius_2, data_track_.dz,
+                                             data_track_.armors_num, chassis_vel_->angular_->z());
+  bullet_solver_->judgeShootBeforehand(time, data_track_.v_yaw);
+
+  if (publish_rate_ > 0.0 && last_publish_time_ + ros::Duration(1.0 / publish_rate_) < time)
   {
-    solve_success = ballistic_solver_->solver(odom2gimbal_, odom2target_data_, ballistic_yaw, ballistic_pitch);
-    if (publish_rate_ > 0.0 && last_publish_time_ + ros::Duration(1.0 / publish_rate_) < time)
+    if (error_pub_->trylock())
     {
-      if (ballistic_solution_pub_->trylock())
-      {
-        std_msgs::Float32MultiArray data;
-        data.data.emplace_back(ballistic_yaw);
-        data.data.emplace_back(ballistic_pitch);
-        data.data.emplace_back(ballistic_solver_->used_fallback_);
-        ballistic_solution_pub_->msg_.data = data.data;
-        ballistic_solution_pub_->unlockAndPublish();
-      }
-      last_publish_time_ = time;
+      double error =
+          bullet_solver_->getGimbalError(target_pos, target_vel, data_track_.yaw, data_track_.v_yaw,
+                                         data_track_.radius_1, data_track_.radius_2, data_track_.dz,
+                                         data_track_.armors_num, yaw_compute, pitch_compute, cmd_gimbal_.bullet_speed);
+      error_pub_->msg_.stamp = time;
+      error_pub_->msg_.error = solve_success ? error : 1.0;
+      error_pub_->unlockAndPublish();
     }
-  }
-  else
-  {
-    solve_success = bullet_solver_->solve(target_pos, target_vel, cmd_gimbal_.bullet_speed, yaw, data_track_.v_yaw,
-                                          data_track_.radius_1, data_track_.radius_2, data_track_.dz,
-                                          data_track_.armors_num, chassis_vel_->angular_->z());
-    bullet_solver_->judgeShootBeforehand(time, data_track_.v_yaw);
-    if (publish_rate_ > 0.0 && last_publish_time_ + ros::Duration(1.0 / publish_rate_) < time)
-    {
-      if (error_pub_->trylock())
-      {
-        double error = bullet_solver_->getGimbalError(target_pos, target_vel, data_track_.yaw, data_track_.v_yaw,
-                                                      data_track_.radius_1, data_track_.radius_2, data_track_.dz,
-                                                      data_track_.armors_num, yaw_compute, pitch_compute,
-                                                      cmd_gimbal_.bullet_speed);
-        error_pub_->msg_.stamp = time;
-        error_pub_->msg_.error = solve_success ? error : 1.0;
-        error_pub_->unlockAndPublish();
-      }
-      bullet_solver_->bulletModelPub(odom2gimbal_, time);
-      last_publish_time_ = time;
-    }
+    bullet_solver_->bulletModelPub(odom2gimbal_, time);
+    last_publish_time_ = time;
   }
 
   if (solve_success)
-  {
-    if (odom2target_data_.id == 8)
-    {
-      //std::cout<<"setDes"<<std::endl;
-      setDes(time, ballistic_yaw, ballistic_pitch);
-    }
-    else
-      setDes(time, bullet_solver_->getYaw(), bullet_solver_->getPitch());
-  }
+    setDes(time, bullet_solver_->getYaw(), bullet_solver_->getPitch());
   else
   {
     odom2gimbal_des_.header.stamp = time;
@@ -471,22 +444,14 @@ void Controller::moveJoint(const ros::Time& time, const ros::Duration& period)
     geometry_msgs::Vector3 target_vel;
     if (data_track_.id != 12)
     {
-      if (odom2target_data_.id == 8)
-      {
-        target_pos = odom2target_data_.position;
-        target_vel = odom2target_data_.velocity;
-      }
-      else
-      {
-        geometry_msgs::Point pos = data_track_.position;
-        double yaw = data_track_.yaw + data_track_.v_yaw * ((time - data_track_.header.stamp).toSec());
-        pos.x += data_track_.velocity.x * (time - data_track_.header.stamp).toSec();
-        pos.y += data_track_.velocity.y * (time - data_track_.header.stamp).toSec();
-        pos.z += data_track_.velocity.z * (time - data_track_.header.stamp).toSec();
-        bullet_solver_->getSelectedArmorPosAndVel(target_pos, target_vel, pos, data_track_.velocity, yaw,
-                                                  data_track_.v_yaw, data_track_.radius_1, data_track_.radius_2,
-                                                  data_track_.dz, data_track_.armors_num);
-      }
+      geometry_msgs::Point pos = data_track_.position;
+      double yaw = data_track_.yaw + data_track_.v_yaw * ((time - data_track_.header.stamp).toSec());
+      pos.x += data_track_.velocity.x * (time - data_track_.header.stamp).toSec();
+      pos.y += data_track_.velocity.y * (time - data_track_.header.stamp).toSec();
+      pos.z += data_track_.velocity.z * (time - data_track_.header.stamp).toSec();
+      bullet_solver_->getSelectedArmorPosAndVel(target_pos, target_vel, pos, data_track_.velocity, yaw,
+                                                data_track_.v_yaw, data_track_.radius_1, data_track_.radius_2,
+                                                data_track_.dz, data_track_.armors_num);
     }
     else
     {
@@ -500,51 +465,25 @@ void Controller::moveJoint(const ros::Time& time, const ros::Duration& period)
     try
     {
       geometry_msgs::TransformStamped transform;
-      if (odom2target_data_.id == 8)
+      if (joint_urdfs_.find(2) != joint_urdfs_.end())
       {
-        if (joint_urdfs_.find(2) != joint_urdfs_.end())
-        {
-          transform = robot_state_handle_.lookupTransform(odom2base_.child_frame_id, odom2target_data_.header.frame_id,
-                                                          odom2target_data_.header.stamp);
-          tf2::doTransform(target_pos, target_pos, transform);
-          tf2::doTransform(target_vel, target_vel, transform);
-          tf2::fromMsg(target_pos, target_pos_tf);
-          tf2::fromMsg(target_vel, target_vel_tf);
-          vel_des[2] = target_pos_tf.cross(target_vel_tf).z() / std::pow((target_pos_tf.length()), 2);
-        }
-        if (joint_urdfs_.find(1) != joint_urdfs_.end())
-        {
-          transform = robot_state_handle_.lookupTransform(joint_urdfs_.at(1)->parent_link_name,
-                                                          odom2target_data_.header.frame_id, odom2target_data_.header.stamp);
-          tf2::doTransform(target_pos, target_pos, transform);
-          tf2::doTransform(target_vel, target_vel, transform);
-          tf2::fromMsg(target_pos, target_pos_tf);
-          tf2::fromMsg(target_vel, target_vel_tf);
-          vel_des[1] = target_pos_tf.cross(target_vel_tf).y() / std::pow((target_pos_tf.length()), 2);
-        }
+        transform = robot_state_handle_.lookupTransform(odom2base_.child_frame_id, data_track_.header.frame_id,
+                                                        data_track_.header.stamp);
+        tf2::doTransform(target_pos, target_pos, transform);
+        tf2::doTransform(target_vel, target_vel, transform);
+        tf2::fromMsg(target_pos, target_pos_tf);
+        tf2::fromMsg(target_vel, target_vel_tf);
+        vel_des[2] = target_pos_tf.cross(target_vel_tf).z() / std::pow((target_pos_tf.length()), 2);
       }
-      else
+      if (joint_urdfs_.find(1) != joint_urdfs_.end())
       {
-        if (joint_urdfs_.find(2) != joint_urdfs_.end())
-        {
-          transform = robot_state_handle_.lookupTransform(odom2base_.child_frame_id, data_track_.header.frame_id,
-                                                          data_track_.header.stamp);
-          tf2::doTransform(target_pos, target_pos, transform);
-          tf2::doTransform(target_vel, target_vel, transform);
-          tf2::fromMsg(target_pos, target_pos_tf);
-          tf2::fromMsg(target_vel, target_vel_tf);
-          vel_des[2] = target_pos_tf.cross(target_vel_tf).z() / std::pow((target_pos_tf.length()), 2);
-        }
-        if (joint_urdfs_.find(1) != joint_urdfs_.end())
-        {
-          transform = robot_state_handle_.lookupTransform(joint_urdfs_.at(1)->parent_link_name,
-                                                          data_track_.header.frame_id, data_track_.header.stamp);
-          tf2::doTransform(target_pos, target_pos, transform);
-          tf2::doTransform(target_vel, target_vel, transform);
-          tf2::fromMsg(target_pos, target_pos_tf);
-          tf2::fromMsg(target_vel, target_vel_tf);
-          vel_des[1] = target_pos_tf.cross(target_vel_tf).y() / std::pow((target_pos_tf.length()), 2);
-        }
+        transform = robot_state_handle_.lookupTransform(joint_urdfs_.at(1)->parent_link_name,
+                                                        data_track_.header.frame_id, data_track_.header.stamp);
+        tf2::doTransform(target_pos, target_pos, transform);
+        tf2::doTransform(target_vel, target_vel, transform);
+        tf2::fromMsg(target_pos, target_pos_tf);
+        tf2::fromMsg(target_vel, target_vel_tf);
+        vel_des[1] = target_pos_tf.cross(target_vel_tf).y() / std::pow((target_pos_tf.length()), 2);
       }
     }
     catch (tf2::TransformException& ex)
@@ -635,6 +574,21 @@ void Controller::updateChassisVel()
   last_odom2base_ = odom2base_;
 }
 
+void Controller::updateBallisticSolution(const ros::Time& time)
+{
+  if (publish_rate_ > 0.0 && last_ballistic_publish_time_ + ros::Duration(1.0 / publish_rate_) < time) {
+    if (ballistic_solution_pub_->trylock()) {
+      std_msgs::Float32MultiArray data;
+      data.data.emplace_back(ballistic_yaw_);
+      data.data.emplace_back(ballistic_pitch_);
+      data.data.emplace_back(ballistic_solver_->used_fallback_);
+      ballistic_solution_pub_->msg_.data = data.data;
+      ballistic_solution_pub_->unlockAndPublish();
+    }
+    last_ballistic_publish_time_ = time;
+  }
+}
+
 std::string Controller::getGimbalFrameID(std::unordered_map<int, urdf::JointConstSharedPtr> joint_urdfs)
 {
   if (joint_urdfs.find(1) != joint_urdfs.end())
@@ -677,13 +631,20 @@ void Controller::trackCB(const rm_msgs::TrackDataConstPtr& msg)
   track_rt_buffer_.writeFromNonRT(*msg);
 }
 
-void Controller::odom2targetDataCB(const rm_msgs::TrackDataConstPtr& msg)
+void Controller::ballisticTrackCB(const std_msgs::BoolConstPtr& msg)
+{
+  ballistic_track_rt_buffer_.writeFromNonRT(*msg);
+  bool ballistic_track = msg->data;
+  if (ballistic_track)
+    ballistic_solver_->solver(base2gimbal_, base2target_data_, ballistic_yaw_, ballistic_pitch_);
+}
+
+void Controller::base2targetDataCB(const rm_msgs::TrackDataConstPtr& msg)
 {
   if (msg->id == 0)
     return;
-  odom2target_data_rt_buffer_.writeFromNonRT(*msg);
+  base2target_data_rt_buffer_.writeFromNonRT(*msg);
 }
-
 
 void Controller::reconfigCB(rm_gimbal_controllers::GimbalBaseConfig& config, uint32_t /*unused*/)
 {

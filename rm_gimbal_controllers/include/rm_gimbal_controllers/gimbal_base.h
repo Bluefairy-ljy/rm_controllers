@@ -57,6 +57,8 @@
 #include <dynamic_reconfigure/server.h>
 #include <realtime_tools/realtime_publisher.h>
 #include <unordered_map>
+#include <nav_msgs/Odometry.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <std_msgs/Float32MultiArray.h>
 
 namespace rm_gimbal_controllers
@@ -150,11 +152,13 @@ private:
                        tf2::Quaternion& base2new_des);
   void moveJoint(const ros::Time& time, const ros::Duration& period);
   void updateChassisVel();
+  void updateBallisticSolution(const ros::Time& time);
   double feedForward(const ros::Time& time);
   double updateCompensation(double chassis_vel_angular_z);
   void commandCB(const rm_msgs::GimbalCmdConstPtr& msg);
   void trackCB(const rm_msgs::TrackDataConstPtr& msg);
-  void odom2targetDataCB(const rm_msgs::TrackDataConstPtr& msg);
+  void ballisticTrackCB(const std_msgs::BoolConstPtr& msg);
+  void base2targetDataCB(const rm_msgs::TrackDataConstPtr& msg);
   void reconfigCB(rm_gimbal_controllers::GimbalBaseConfig& config, uint32_t);
   std::string getGimbalFrameID(std::unordered_map<int, urdf::JointConstSharedPtr> joint_urdfs);
   std::string getBaseFrameID(std::unordered_map<int, urdf::JointConstSharedPtr> joint_urdfs);
@@ -166,32 +170,36 @@ private:
   std::unordered_map<int, urdf::JointConstSharedPtr> joint_urdfs_;
   std::unordered_map<int, bool> pos_des_in_limit_;
   bool has_imu_ = true;
+  double ballistic_yaw_, ballistic_pitch_;
 
   std::shared_ptr<BulletSolver> bullet_solver_;
   std::shared_ptr<BallisticSolver> ballistic_solver_;
 
   // ROS Interface
   ros::Time last_publish_time_{};
+  ros::Time last_ballistic_publish_time_{};
   std::unordered_map<int, std::unique_ptr<realtime_tools::RealtimePublisher<rm_msgs::GimbalPosState>>> pos_state_pub_;
   std::shared_ptr<realtime_tools::RealtimePublisher<rm_msgs::GimbalDesError>> error_pub_;
   std::shared_ptr<realtime_tools::RealtimePublisher<std_msgs::Float32MultiArray>> ballistic_solution_pub_;
   ros::Subscriber cmd_gimbal_sub_;
   ros::Subscriber data_track_sub_;
-  ros::Subscriber odom2target_data_sub_;
+  ros::Subscriber ballistic_track_sub_;
+  ros::Subscriber base2target_data_sub_;
   realtime_tools::RealtimeBuffer<rm_msgs::GimbalCmd> cmd_rt_buffer_;
   realtime_tools::RealtimeBuffer<rm_msgs::TrackData> track_rt_buffer_;
-  realtime_tools::RealtimeBuffer<rm_msgs::TrackData> odom2target_data_rt_buffer_;
+  realtime_tools::RealtimeBuffer<std_msgs::Bool> ballistic_track_rt_buffer_;
+  realtime_tools::RealtimeBuffer<rm_msgs::TrackData> base2target_data_rt_buffer_;
 
   rm_msgs::GimbalCmd cmd_gimbal_;
   rm_msgs::TrackData data_track_;
-  rm_msgs::TrackData odom2target_data_;
+  rm_msgs::TrackData base2target_data_;
   std::string gimbal_des_frame_id_{}, imu_name_{};
   double publish_rate_{};
   bool state_changed_{};
   int loop_count_{};
 
   // Transform
-  geometry_msgs::TransformStamped odom2gimbal_des_, odom2gimbal_, odom2base_, last_odom2base_;
+  geometry_msgs::TransformStamped odom2gimbal_des_, odom2gimbal_, odom2base_, last_odom2base_, base2gimbal_;
 
   // Gravity Compensation
   geometry_msgs::Vector3 mass_origin_;
