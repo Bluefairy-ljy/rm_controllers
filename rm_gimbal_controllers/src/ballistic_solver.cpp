@@ -37,7 +37,7 @@ BallisticSolver::BallisticSolver(ros::NodeHandle& controller_nh)
   d_srv_->setCallback(cb);
 }
 
-bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal, const rm_msgs::TrackData& track_data, double& yaw, double& pitch)
+bool BallisticSolver::solver(const geometry_msgs::TransformStamped& base2gimbal, const rm_msgs::TrackData& track_data, double& yaw, double& pitch)
 {
   BallisticConfig config = *config_rt_buffer_.readFromRT();
   geometry_msgs::Vector3 launch2target;
@@ -46,18 +46,16 @@ bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal,
     launch2target.y = config.debug_y;
     launch2target.z = config.debug_z;
   }else {
-    launch2target.x = track_data.position.x - odom2gimbal.transform.translation.x;
-    launch2target.y = track_data.position.y - odom2gimbal.transform.translation.y;
-    launch2target.z = track_data.position.z - odom2gimbal.transform.translation.z;
+    launch2target.x = track_data.position.x - base2gimbal.transform.translation.x-0.20;
+    launch2target.y = track_data.position.y - base2gimbal.transform.translation.y;
+    launch2target.z = track_data.position.z - base2gimbal.transform.translation.z;
   }
-  double target_dis = std::sqrt(launch2target.x * launch2target.x + launch2target.y * launch2target.y)-0.08;
-  double target_hgt = launch2target.z-0.05;
+  double target_dis = std::sqrt(launch2target.x * launch2target.x + launch2target.y * launch2target.y);
+  double target_hgt = launch2target.z-0.10;
   double initial_vel = target_dis <= 16.5 ? config.initial_vel_near : config.initial_vel_far;
-  std::cout<<"initial_vel: "<<initial_vel<<std::endl;
   std::cout << "target_dis" << target_dis << std::endl << "target_hgt" << target_hgt << std::endl;
   std::cout << launch2target.x << "   " << launch2target.y << "   " << launch2target.z << std::endl;
   yaw = std::atan2(launch2target.y, launch2target.x);
-  std::cout << "yaw: " << yaw << std::endl;
   // Use LUT to get initial guess.Originally defined: negative pitch indicates upward angle (head up)
   double initial_pitch = -output_pitch_match_lut_.output(target_dis);
   std::cout << "initial_pitch: " << initial_pitch << std::endl;
@@ -65,7 +63,6 @@ bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal,
   auto error_function = [&](double pitch_angle) -> double {
     return simulate(pitch_angle, initial_vel, target_dis, target_hgt);
   };
-  used_fallback_ = true;
   double current_pitch = initial_pitch;
   double error = error_function(current_pitch);
   // Check if initial guess is already good enough
@@ -93,6 +90,7 @@ bool BallisticSolver::solver(const geometry_msgs::TransformStamped& odom2gimbal,
     // Check convergence after update
     if (std::abs(update_error) < config.newton_convergence_tol)
     {
+      std::cout<<"update pitch is well"<<std::endl;
       pitch = -update_pitch;
       used_fallback_ = false;
       return true;
@@ -150,7 +148,8 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
     z_at_target = z_prev + (z_curr - z_prev) * (target_dis - x_prev) / (x_curr - x_prev);
     std::cout<<t<<std::endl;
   }
-  std::cout << "z_at_target = " << z_at_target << std::endl;
+  double a=z_at_target-target_hgt;
+  std::cout << "error = " << a << std::endl;
   return z_at_target - target_hgt;
 }
 

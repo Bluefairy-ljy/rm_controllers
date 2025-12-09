@@ -9,6 +9,7 @@
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
 #include <realtime_tools/realtime_buffer.h>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <geometry_msgs/TransformStamped.h>
 #include <geometry_msgs/PointStamped.h>
 #include <dynamic_reconfigure/server.h>
@@ -35,7 +36,7 @@ class BallisticSolver
 public:
   explicit BallisticSolver(ros::NodeHandle& nh);
   ~BallisticSolver() = default;
-  bool used_fallback_ = false;
+  bool used_fallback_ = true;
   /**
    * @brief Simulate trajectory and return vertical error at target distance
    * @param pitch_angle_ Launch pitch angle
@@ -52,7 +53,7 @@ public:
    * @param pitch Output: desired pitch angle
    * @return true if solution converged
    */
-  bool solver(const geometry_msgs::TransformStamped& odom2gimbal, const rm_msgs::TrackData& track_data, double& yaw, double& pitch);
+  bool solver(const geometry_msgs::TransformStamped& base2gimbal, const rm_msgs::TrackData& track_data, double& yaw, double& pitch);
   void reconfigCB(rm_gimbal_controllers::BallisticSolverConfig& config, uint32_t);
 
 private:
