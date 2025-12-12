@@ -21,11 +21,18 @@ bool Controller::init(hardware_interface::RobotHW* robot_hw, ros::NodeHandle& ro
   imu_sensor_ = robot_hw->get<rm_control::RmImuSensorInterface>()->getHandle(name);
   robot_state_ = robot_hw->get<rm_control::RobotStateInterface>()->getHandle("robot_state");
 
-  tf_broadcaster_.init(root_nh);
-  imu_data_sub_ = root_nh.subscribe<sensor_msgs::Imu>("data", 1, &Controller::imuDataCallback, this);
+  // imu_data_sub_ = root_nh.subscribe<sensor_msgs::Imu>("data", 1, &Controller::imuDataCallback, this);
   source2target_msg_.header.frame_id = frame_source_;
   source2target_msg_.child_frame_id = frame_target_;
+  source2target_msg_.transform.translation.x = 0.0;
+  source2target_msg_.transform.translation.y = 0.0;
+  source2target_msg_.transform.translation.z = 0.0;
+  source2target_msg_.transform.rotation.x = 0.0;
+  source2target_msg_.transform.rotation.y = 0.0;
+  source2target_msg_.transform.rotation.z = 0.0;
   source2target_msg_.transform.rotation.w = 1.0;
+  // tf_broadcaster_.init(root_nh);
+  // tf_broadcaster_.sendTransform(source2target_msg_);
   return true;
 }
 
@@ -45,8 +52,27 @@ void Controller::update(const ros::Time& time, const ros::Duration& period)
             source2target :
             source2target_msg_;
     robot_state_.setTransform(source2target_msg_, "rm_orientation_controller");
-    if (!receive_imu_msg_)
-      tf_broadcaster_.sendTransform(source2target_msg_);
+
+    // {  // Extract yaw from rotation and discard roll/pitch
+    //   double roll, pitch, yaw;
+    //   quatToRPY(source2target_msg_.transform.rotation, roll, pitch, yaw);
+
+    //   // Create new quaternion with only yaw rotation
+    //   tf2::Quaternion yaw_only_quat;
+    //   yaw_only_quat.setRPY(0.0, 0.0, yaw);
+
+    //   // Assign back to source2target_msg_
+    //   source2target_msg_.transform.rotation.x = yaw_only_quat.x();
+    //   source2target_msg_.transform.rotation.y = yaw_only_quat.y();
+    //   source2target_msg_.transform.rotation.z = yaw_only_quat.z();
+    //   source2target_msg_.transform.rotation.w = yaw_only_quat.w();
+
+    //   source2target_msg_.transform.translation.x = 0;
+    //   source2target_msg_.transform.translation.y = 0;
+    //   source2target_msg_.transform.translation.z = 0;
+    // }
+
+    // tf_broadcaster_.sendTransform(source2target_msg_);
   }
 }
 
@@ -72,6 +98,10 @@ bool Controller::getTransform(const ros::Time& time, geometry_msgs::TransformSta
     ROS_WARN("%s", ex.what());
     return false;
   }
+  // std::cout << "source2odom: " << source2odom.getOrigin().x() << " " << source2odom.getOrigin().y() << " "<< source2odom.getOrigin().z()
+  // << std::endl; std::cout << "odom2fixed: " << odom2fixed.getOrigin().x() << " " << odom2fixed.getOrigin().y() << "
+  // "<< odom2fixed.getOrigin().z() << std::endl; std::cout << "fixed2target: " << fixed2target.getOrigin().x() << " "
+  // << fixed2target.getOrigin().y() << " "<< fixed2target.getOrigin().z() << std::endl;
   tf2::Quaternion odom2fixed_quat;
   odom2fixed_quat.setValue(x, y, z, w);
   odom2fixed.setRotation(odom2fixed_quat);
@@ -79,16 +109,16 @@ bool Controller::getTransform(const ros::Time& time, geometry_msgs::TransformSta
   return true;
 }
 
-void Controller::imuDataCallback(const sensor_msgs::Imu::ConstPtr& msg)
-{
-  if (!receive_imu_msg_)
-    receive_imu_msg_ = true;
-  geometry_msgs::TransformStamped source2target;
-  source2target.header.stamp = msg->header.stamp;
-  getTransform(ros::Time(0), source2target, msg->orientation.x, msg->orientation.y, msg->orientation.z,
-               msg->orientation.w);
-  tf_broadcaster_.sendTransform(source2target);
-}
+// void Controller::imuDataCallback(const sensor_msgs::Imu::ConstPtr& msg)
+// {
+//   if (!receive_imu_msg_)
+//     receive_imu_msg_ = true;
+//   geometry_msgs::TransformStamped source2target;
+//   source2target.header.stamp = msg->header.stamp;
+//   getTransform(ros::Time(0), source2target, msg->orientation.x, msg->orientation.y, msg->orientation.z,
+//                msg->orientation.w);
+//   tf_broadcaster_.sendTransform(source2target);
+// }
 
 }  // namespace rm_orientation_controller
 

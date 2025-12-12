@@ -177,7 +177,7 @@ void Controller::update(const ros::Time& time, const ros::Duration& period)
   {
     odom2gimbal_ = robot_state_handle_.lookupTransform("odom", odom2gimbal_.child_frame_id, time);
     odom2base_ = robot_state_handle_.lookupTransform("odom", odom2base_.child_frame_id, time);
-    base2gimbal_ = robot_state_handle_.lookupTransform("base_link","pitch",time);
+    base2gimbal_ = robot_state_handle_.lookupTransform(odom2base_.child_frame_id,odom2gimbal_.child_frame_id,time);
   }
   catch (tf2::TransformException& ex)
   {
