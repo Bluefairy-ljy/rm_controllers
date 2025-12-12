@@ -443,14 +443,8 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
         robot_odom2lidar_odom_.header.stamp = time;
         robot_odom2lidar_odom_.header.frame_id = robot_odom_frame_id_;
         robot_odom2lidar_odom_.child_frame_id = lidar_odom_frame_id_;
-        auto trans = robot_state_handle_.lookupTransform(robot_base_frame_id_, lidar_base_frame_id_, time);
-        robot_odom2lidar_odom_.transform.translation.x = trans.transform.translation.x;
-        robot_odom2lidar_odom_.transform.translation.y = trans.transform.translation.y;
-        robot_odom2lidar_odom_.transform.translation.z = trans.transform.translation.z;
-        robot_odom2lidar_odom_.transform.rotation.x = trans.transform.rotation.x;
-        robot_odom2lidar_odom_.transform.rotation.y = trans.transform.rotation.y;
-        robot_odom2lidar_odom_.transform.rotation.z = trans.transform.rotation.z;
-        robot_odom2lidar_odom_.transform.rotation.w = trans.transform.rotation.w;
+        auto trans = robot_state_handle_.lookupTransform(robot_base_frame_id_, lidar_base_frame_id_, ros::Time(0));
+        robot_odom2lidar_odom_.transform = trans.transform;
         slam_odom_initialized_ = true;
         ROS_INFO("Initialized robot_odom -> lidar_odom tf");
       }
@@ -478,10 +472,6 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
       tf2::fromMsg(robot_odom2lidar_odom_.transform, tf_robot_odom2lidar_odom_);
       tf2::fromMsg(lidar_odom2lidar_base_.transform, tf_lidar_odom2lidar_base_);
       tf2::fromMsg(lidar_base2robot_base_.transform, tf_lidar_base2robot_base_);
-
-//      tf2::Transform tf_lidar_odom2robot_base_=tf_lidar_odom2lidar_base_ * tf_lidar_base2robot_base_;
-//      std::cout<<"tf_lidar_odom2robot_base_.x "<<tf_lidar_odom2robot_base_.getOrigin().x()<<std::endl;
-//      std::cout<<"tf_lidar_odom2robot_base_.y "<<tf_lidar_odom2robot_base_.getOrigin().y()<<std::endl;
 
       tf_robot_odom2robot_base_ = tf_robot_odom2lidar_odom_ * tf_lidar_odom2lidar_base_ * tf_lidar_base2robot_base_;
       robot_odom2robot_base_.transform = tf2::toMsg(tf_robot_odom2robot_base_);
@@ -534,8 +524,8 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
 
     if (ros::Time::now() - last_debug_time_slam_ > ros::Duration(1.0))
     {  // debug message
-//      ROS_INFO("robot_odometry position %lf %lf %lf", robot_odom2robot_base_.transform.translation.x,
-//               robot_odom2robot_base_.transform.translation.y, robot_odom2robot_base_.transform.translation.z);
+      ROS_INFO("robot_odometry position %lf %lf %lf", robot_odom2robot_base_.transform.translation.x,
+               robot_odom2robot_base_.transform.translation.y, robot_odom2robot_base_.transform.translation.z);
       // ROS_INFO("robot_odometry orient %lf %lf %lf %lf", robot_odom2robot_base_.transform.rotation.x,
       //          robot_odom2robot_base_.transform.rotation.y, robot_odom2robot_base_.transform.rotation.z,
       //          robot_odom2robot_base_.transform.rotation.w);
