@@ -60,7 +60,6 @@ void ChassisBase<T...>::initialize_parameters(hardware_interface::RobotHW* robot
     controller_nh.getParam("enable_wheel_odom", enable_wheel_odom_);
     controller_nh.getParam("enable_slam_odom", enable_slam_odom_);
     controller_nh.getParam("global_map_frame_id", global_map_frame_id_);
-    controller_nh.getParam("imu_odom_frame_id", imu_odom_frame_id_);
     controller_nh.getParam("robot_odom_frame_id", robot_odom_frame_id_);
     controller_nh.getParam("robot_base_frame_id", robot_base_frame_id_);
     controller_nh.getParam("lidar_odom_frame_id", lidar_odom_frame_id_);
@@ -108,7 +107,6 @@ void ChassisBase<T...>::initialize_parameters(hardware_interface::RobotHW* robot
 
     last_debug_time_wheel_ = ros::Time::now();
     last_debug_time_slam_ = ros::Time::now();
-    last_debug_time_imu_ = ros::Time::now();
 
     robot_state_handle_ = robot_hw->get<rm_control::RobotStateInterface>()->getHandle("robot_state");
     effort_joint_interface_ = robot_hw->get<hardware_interface::EffortJointInterface>();
@@ -184,19 +182,20 @@ bool ChassisBase<T...>::init(hardware_interface::RobotHW* robot_hw, ros::NodeHan
   {  // init robot_odom -> robot_base
     try
     {
-      robot_odom2imu_odom_.header.stamp = ros::Time::now();
-      robot_odom2imu_odom_.header.frame_id = robot_odom_frame_id_;
-      robot_odom2imu_odom_.child_frame_id = imu_odom_frame_id_;
-      robot_odom2imu_odom_.transform.translation.x = 0;
-      robot_odom2imu_odom_.transform.translation.y = 0;
-      robot_odom2imu_odom_.transform.translation.z = 0;
-      robot_odom2imu_odom_.transform.rotation.x = 0;
-      robot_odom2imu_odom_.transform.rotation.y = 0;
-      robot_odom2imu_odom_.transform.rotation.z = 0;
-      robot_odom2imu_odom_.transform.rotation.w = 1;
-      tf_broadcaster4robot_odom2imu_odom_.init(root_nh);
-      tf_broadcaster4robot_odom2imu_odom_.sendTransform(robot_odom2imu_odom_);
-      ROS_INFO("Initialized robot_odom -> imu_odom tf broadcaster");
+      robot_odom2robot_base_.header.stamp = ros::Time::now();
+      robot_odom2robot_base_.header.frame_id = robot_odom_frame_id_;
+      robot_odom2robot_base_.child_frame_id = robot_base_frame_id_;
+      robot_odom2robot_base_.transform.translation.x = 0;
+      robot_odom2robot_base_.transform.translation.y = 0;
+      robot_odom2robot_base_.transform.translation.z = 0;
+      robot_odom2robot_base_.transform.rotation.x = 0;
+      robot_odom2robot_base_.transform.rotation.y = 0;
+      robot_odom2robot_base_.transform.rotation.z = 0;
+      robot_odom2robot_base_.transform.rotation.w = 1;
+      tf_broadcaster4robot_odom2lidar_odom_.init(root_nh);
+      tf_broadcaster4robot_odom2robot_base_.init(root_nh);
+      tf_broadcaster4robot_odom2robot_base_.sendTransform(robot_odom2robot_base_);
+      ROS_INFO("Initialized robot_odom -> robot_base tf broadcaster");
     }
     catch (...)
     {
@@ -204,34 +203,6 @@ bool ChassisBase<T...>::init(hardware_interface::RobotHW* robot_hw, ros::NodeHan
       return false;
     }
   }
-  if (enable_slam_odom_)
-  {
-    try
-    {  // init robot_odom->lidar_odom tf
-      // tf_broadcaster4robot_odom2lidar_odom_.init(root_nh);
-      robot_odom2lidar_odom_.header.stamp = ros::Time::now();
-      robot_odom2lidar_odom_.header.frame_id = robot_odom_frame_id_;
-      robot_odom2lidar_odom_.child_frame_id = lidar_odom_frame_id_;
-      auto trans = robot_state_handle_.lookupTransform(robot_base_frame_id_, lidar_base_frame_id_, ros::Time(0));
-      robot_odom2lidar_odom_.transform.translation.x = trans.transform.translation.x;
-      robot_odom2lidar_odom_.transform.translation.y = trans.transform.translation.y;
-      robot_odom2lidar_odom_.transform.translation.z = trans.transform.translation.z;
-      robot_odom2lidar_odom_.transform.rotation.x = trans.transform.rotation.x;
-      robot_odom2lidar_odom_.transform.rotation.y = trans.transform.rotation.y;
-      robot_odom2lidar_odom_.transform.rotation.z = trans.transform.rotation.z;
-      robot_odom2lidar_odom_.transform.rotation.w = trans.transform.rotation.w;
-      // tf_broadcaster4robot_odom2lidar_odom_.init(root_nh);
-      // tf_broadcaster4robot_odom2lidar_odom_.sendTransform(robot_odom2lidar_odom_);
-      // slam_odom_initialized_ = true;
-      ROS_INFO("Initialized robot_odom -> lidar_odom tf");
-    }
-    catch (...)
-    {
-      ROS_ERROR("Failed to init robot_odom -> lidar_odom tf broadcaster");
-      return false;
-    }
-  }
-
   return true;
 }
 
@@ -473,13 +444,7 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
         robot_odom2lidar_odom_.header.frame_id = robot_odom_frame_id_;
         robot_odom2lidar_odom_.child_frame_id = lidar_odom_frame_id_;
         auto trans = robot_state_handle_.lookupTransform(robot_base_frame_id_, lidar_base_frame_id_, ros::Time(0));
-        robot_odom2lidar_odom_.transform.translation.x = trans.transform.translation.x;
-        robot_odom2lidar_odom_.transform.translation.y = trans.transform.translation.y;
-        robot_odom2lidar_odom_.transform.translation.z = trans.transform.translation.z;
-        robot_odom2lidar_odom_.transform.rotation.x = trans.transform.rotation.x;
-        robot_odom2lidar_odom_.transform.rotation.y = trans.transform.rotation.y;
-        robot_odom2lidar_odom_.transform.rotation.z = trans.transform.rotation.z;
-        robot_odom2lidar_odom_.transform.rotation.w = trans.transform.rotation.w;
+        robot_odom2lidar_odom_.transform = trans.transform;
         slam_odom_initialized_ = true;
         ROS_INFO("Initialized robot_odom -> lidar_odom tf");
       }
@@ -502,7 +467,15 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
       lidar_odom2lidar_base_.transform.rotation.w = slam_msg->pose.pose.orientation.w;
       topic_update_ = false;
       lidar_base2robot_base_ =
-          robot_state_handle_.lookupTransform(lidar_base_frame_id_, robot_base_frame_id_, slam_msg->header.stamp);
+          robot_state_handle_.lookupTransform(lidar_base_frame_id_, robot_base_frame_id_, ros::Time(0));
+
+      tf2::fromMsg(robot_odom2lidar_odom_.transform, tf_robot_odom2lidar_odom_);
+      tf2::fromMsg(lidar_odom2lidar_base_.transform, tf_lidar_odom2lidar_base_);
+      tf2::fromMsg(lidar_base2robot_base_.transform, tf_lidar_base2robot_base_);
+
+      tf_robot_odom2robot_base_ = tf_robot_odom2lidar_odom_ * tf_lidar_odom2lidar_base_ * tf_lidar_base2robot_base_;
+      robot_odom2robot_base_.transform = tf2::toMsg(tf_robot_odom2robot_base_);
+      // robot_state_handle_.setTransform(robot_odom2robot_base_, "rm_chassis_controllers");
     }
     catch (...)
     {
@@ -510,54 +483,33 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
       return;
     }
 
-    try
-    {  // mix slam_odom to robot_odom->robot_base
-      robot_base2imu_odom_ =
-          robot_state_handle_.lookupTransform(robot_base_frame_id_, imu_odom_frame_id_, ros::Time(0));
+    // try
+    // {  // mix slam_odom to robot_odom->robot_base
 
-      // {  // Extract yaw from rotation and discard roll/pitch
-      //   double roll, pitch, yaw;
-      //   quatToRPY(robot_base2imu_odom_.transform.rotation, roll, pitch, yaw);
+    //   // {  // Extract yaw from rotation and discard roll/pitch
+    //   //   double roll, pitch, yaw;
+    //   //   quatToRPY(robot_base2imu_odom_.transform.rotation, roll, pitch, yaw);
 
-      //   // Create new quaternion with only yaw rotation
-      //   tf2::Quaternion yaw_only_quat;
-      //   yaw_only_quat.setRPY(0.0, 0.0, yaw);
+    //   //   // Create new quaternion with only yaw rotation
+    //   //   tf2::Quaternion yaw_only_quat;
+    //   //   yaw_only_quat.setRPY(0.0, 0.0, yaw);
 
-      //   // Assign back to robot_base2imu_odom_
-      //   robot_base2imu_odom_.transform.rotation.x = yaw_only_quat.x();
-      //   robot_base2imu_odom_.transform.rotation.y = yaw_only_quat.y();
-      //   robot_base2imu_odom_.transform.rotation.z = yaw_only_quat.z();
-      //   robot_base2imu_odom_.transform.rotation.w = yaw_only_quat.w();
+    //   //   // Assign back to robot_base2imu_odom_
+    //   //   robot_base2imu_odom_.transform.rotation.x = yaw_only_quat.x();
+    //   //   robot_base2imu_odom_.transform.rotation.y = yaw_only_quat.y();
+    //   //   robot_base2imu_odom_.transform.rotation.z = yaw_only_quat.z();
+    //   //   robot_base2imu_odom_.transform.rotation.w = yaw_only_quat.w();
 
-      //   robot_base2imu_odom_.transform.translation.x = 0;
-      //   robot_base2imu_odom_.transform.translation.y = 0;
-      //   robot_base2imu_odom_.transform.translation.z = 0;
-      // }
+    //   //   robot_base2imu_odom_.transform.translation.x = 0;
+    //   //   robot_base2imu_odom_.transform.translation.y = 0;
+    //   //   robot_base2imu_odom_.transform.translation.z = 0;
+    //   // }
 
-      tf2::fromMsg(robot_odom2lidar_odom_.transform, tf_robot_odom2lidar_odom_);
-      tf2::fromMsg(lidar_odom2lidar_base_.transform, tf_lidar_odom2lidar_base_);
-      tf2::fromMsg(lidar_base2robot_base_.transform, tf_lidar_base2robot_base_);
-      tf2::fromMsg(robot_base2imu_odom_.transform, tf_robot_base2imu_odom_);
-
-      tf_robot_odom2imu_odom_ =
-          tf_robot_odom2lidar_odom_ * tf_lidar_odom2lidar_base_ * tf_lidar_base2robot_base_ * tf_robot_base2imu_odom_;
-      robot_odom2imu_odom_.transform = tf2::toMsg(tf_robot_odom2imu_odom_);
-      robot_state_handle_.setTransform(robot_odom2imu_odom_, "rm_chassis_controllers");
-    }
-    catch (...)
-    {
-      ROS_ERROR("Failed to update robot_odom->imu_odom");
-      return;
-    }
-
-    // if (ros::Time::now() - last_debug_time_imu_ > ros::Duration(1.0))
-    // {  // debug message
-    //   ROS_INFO("imu_odom position %lf %lf %lf", robot_odom2imu_odom_.transform.translation.x,
-    //            robot_odom2imu_odom_.transform.translation.y, robot_odom2imu_odom_.transform.translation.z);
-    //   ROS_INFO("imu_odom orient %lf %lf %lf %lf", robot_odom2imu_odom_.transform.rotation.x,
-    //            robot_odom2imu_odom_.transform.rotation.y, robot_odom2imu_odom_.transform.rotation.z,
-    //            robot_odom2imu_odom_.transform.rotation.w);
-    //   last_debug_time_imu_ = ros::Time::now();
+    // }
+    // catch (...)
+    // {
+    //   ROS_ERROR("Failed to update robot_odom->imu_odom");
+    //   return;
     // }
 
     // if (ros::Time::now() - last_debug_time_slam_ > ros::Duration(1.0))
@@ -570,24 +522,13 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
     //   last_debug_time_slam_ = ros::Time::now();
     // }
 
-    //   if (ros::Time::now() - last_debug_time_slam_ > ros::Duration(1.0))
-    //   {  // debug message
-    //     ROS_INFO("robot_odometry position %lf %lf %lf", robot_odom2robot_base_.transform.translation.x,
-    //              robot_odom2robot_base_.transform.translation.y, robot_odom2robot_base_.transform.translation.z);
-    //     // ROS_INFO("robot_odometry orient %lf %lf %lf %lf", robot_odom2robot_base_.transform.rotation.x,
-    //     //          robot_odom2robot_base_.transform.rotation.y, robot_odom2robot_base_.transform.rotation.z,
-    //     //          robot_odom2robot_base_.transform.rotation.w);
-    //     last_debug_time_slam_ = ros::Time::now();
-    //   }
-    // }
-
     if (ros::Time::now() - last_debug_time_slam_ > ros::Duration(1.0))
     {  // debug message
-      ROS_INFO("robot_odometry position %lf %lf %lf", robot_odom2imu_odom_.transform.translation.x,
-               robot_odom2imu_odom_.transform.translation.y, robot_odom2imu_odom_.transform.translation.z);
-      // ROS_INFO("robot_odometry orient %lf %lf %lf %lf", robot_odom2imu_odom_.transform.rotation.x,
-      //          robot_odom2imu_odom_.transform.rotation.y, robot_odom2imu_odom_.transform.rotation.z,
-      //          robot_odom2imu_odom_.transform.rotation.w);
+      ROS_INFO("robot_odometry position %lf %lf %lf", robot_odom2robot_base_.transform.translation.x,
+               robot_odom2robot_base_.transform.translation.y, robot_odom2robot_base_.transform.translation.z);
+      // ROS_INFO("robot_odometry orient %lf %lf %lf %lf", robot_odom2robot_base_.transform.rotation.x,
+      //          robot_odom2robot_base_.transform.rotation.y, robot_odom2robot_base_.transform.rotation.z,
+      //          robot_odom2robot_base_.transform.rotation.w);
       last_debug_time_slam_ = ros::Time::now();
     }
   }
@@ -601,8 +542,7 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
         auto& nav_odometry = nav_odometry_rtpub_->msg_;
 
         nav_odometry.header.stamp = time;
-        global_map2robot_base_ =
-            robot_state_handle_.lookupTransform(global_map_frame_id_, robot_base_frame_id_, ros::Time(0));
+        global_map2robot_base_ = robot_state_handle_.lookupTransform(global_map_frame_id_, robot_base_frame_id_, time);
         nav_odometry.pose.pose.position.x = global_map2robot_base_.transform.translation.x;
         nav_odometry.pose.pose.position.y = global_map2robot_base_.transform.translation.y;
         nav_odometry.pose.pose.position.z = global_map2robot_base_.transform.translation.z;
@@ -631,8 +571,16 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
         global_map2robot_odom_.header.stamp = time;
         tf_broadcaster4global_map2robot_odom_.sendTransform(global_map2robot_odom_);
 
-        robot_odom2imu_odom_.header.stamp = time;
-        tf_broadcaster4robot_odom2imu_odom_.sendTransform(robot_odom2imu_odom_);
+        robot_odom2robot_base_.header.stamp = time;
+        tf_broadcaster4robot_odom2robot_base_.sendTransform(robot_odom2robot_base_);
+
+        if (slam_odom_initialized_)
+        {
+          robot_odom2lidar_odom_.header.stamp = time;
+          robot_odom2lidar_odom_.header.frame_id = robot_odom_frame_id_;
+          robot_odom2lidar_odom_.child_frame_id = "camera_init";
+          tf_broadcaster4robot_odom2lidar_odom_.sendTransform(robot_odom2lidar_odom_);
+        }
 
         last_publish_time_ = time;
       }

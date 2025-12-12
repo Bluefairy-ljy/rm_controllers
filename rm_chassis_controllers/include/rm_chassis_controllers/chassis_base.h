@@ -165,13 +165,13 @@ protected:
   ros::Subscriber slam_odom_sub_;
   ros::Subscriber localization_result_sub_;
   rm_common::TfRtBroadcaster tf_broadcaster4global_map2robot_odom_{};
-  rm_common::TfRtBroadcaster tf_broadcaster4robot_odom2imu_odom_{};
+  rm_common::TfRtBroadcaster tf_broadcaster4robot_odom2robot_base_{};
+  rm_common::TfRtBroadcaster tf_broadcaster4robot_odom2lidar_odom_{};
   geometry_msgs::TransformStamped global_map2robot_odom_{};
   geometry_msgs::TransformStamped global_map2lidar_odom_{};
   geometry_msgs::TransformStamped global_map2robot_base_{};
   geometry_msgs::TransformStamped robot_odom2robot_base_{};
   geometry_msgs::TransformStamped robot_odom2lidar_odom_{};
-  geometry_msgs::TransformStamped robot_odom2imu_odom_{};
   geometry_msgs::TransformStamped lidar_odom2lidar_base_{};
   geometry_msgs::TransformStamped lidar_base2robot_base_{};
   geometry_msgs::TransformStamped robot_base2imu_odom_{};
@@ -180,8 +180,7 @@ protected:
   tf2::Transform tf_robot_odom2lidar_odom_;
   tf2::Transform tf_lidar_odom2lidar_base_;
   tf2::Transform tf_lidar_base2robot_base_;
-  tf2::Transform tf_robot_base2imu_odom_;
-  tf2::Transform tf_robot_odom2imu_odom_;
+  tf2::Transform tf_robot_odom2robot_base_;
 
   std::string slam_odom_topic_{ "/Odometry" };
   std::string localization_result_topic_{ "/hdl_global_localization/result" };
@@ -215,7 +214,6 @@ protected:
   ros::Time last_publish_time_;
   ros::Time last_debug_time_wheel_;
   ros::Time last_debug_time_slam_;
-  ros::Time last_debug_time_imu_;
 
   geometry_msgs::Vector3 vel_cmd_{};  // x, y
   control_toolbox::Pid pid_follow_;
