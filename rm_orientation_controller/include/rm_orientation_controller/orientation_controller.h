@@ -24,7 +24,7 @@ public:
 private:
   bool getTransform(const ros::Time& time, geometry_msgs::TransformStamped& source2target, const double x,
                     const double y, const double z, const double w);
-  void imuDataCallback(const sensor_msgs::Imu::ConstPtr& msg);
+  // void imuDataCallback(const sensor_msgs::Imu::ConstPtr& msg);
 
   rm_control::RmImuSensorHandle imu_sensor_;
   rm_control::RobotStateHandle robot_state_;
