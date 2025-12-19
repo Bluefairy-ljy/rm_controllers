@@ -60,7 +60,6 @@ void ChassisBase<T...>::initialize_parameters(hardware_interface::RobotHW* robot
     controller_nh.getParam("enable_wheel_odom", enable_wheel_odom_);
     controller_nh.getParam("enable_slam_odom", enable_slam_odom_);
     controller_nh.getParam("global_map_frame_id", global_map_frame_id_);
-    controller_nh.getParam("imu_odom_frame_id", imu_odom_frame_id_);
     controller_nh.getParam("robot_odom_frame_id", robot_odom_frame_id_);
     controller_nh.getParam("robot_base_frame_id", robot_base_frame_id_);
     controller_nh.getParam("lidar_odom_frame_id", lidar_odom_frame_id_);
@@ -108,7 +107,6 @@ void ChassisBase<T...>::initialize_parameters(hardware_interface::RobotHW* robot
 
     last_debug_time_wheel_ = ros::Time::now();
     last_debug_time_slam_ = ros::Time::now();
-    last_debug_time_imu_ = ros::Time::now();
 
     robot_state_handle_ = robot_hw->get<rm_control::RobotStateInterface>()->getHandle("robot_state");
     effort_joint_interface_ = robot_hw->get<hardware_interface::EffortJointInterface>();
