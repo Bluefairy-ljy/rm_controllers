@@ -64,7 +64,7 @@ BulletSolver::BulletSolver(ros::NodeHandle& controller_nh)
     .switch_duration_scale = getParam(controller_nh, "switch_duration_scale", 0.),
     .switch_duration_rate = getParam(controller_nh, "switch_duration_rate", 0.),
     .switch_duration_offset = getParam(controller_nh, "switch_duration_offset", 0.1),
-    .min_shoot_beforehand_vel = getParam(controller_nh, "min_shoot_beforehand_vel", 4.5),
+    .min_shoot_beforehand_vel = getParam(controller_nh, "min_shoot_beforehand_vel", 4.0),
     .max_chassis_angular_vel = getParam(controller_nh, "max_chassis_angular_vel", 8.5),
     .track_rotate_target_delay = getParam(controller_nh, "track_rotate_target_delay", 0.),
     .track_move_target_delay = getParam(controller_nh, "track_move_target_delay", 0.),
@@ -164,7 +164,7 @@ bool BulletSolver::solve(geometry_msgs::Point pos, geometry_msgs::Vector3 vel, d
       track_target_ = true;
   }
   double after_fly_time_yaw_ = yaw + rough_fly_time * v_yaw;
-  switch_armor_angle = acos(r1/target_rho) - 0.7;
+  switch_armor_angle = acos(r1/target_rho) - 0.8;
   traject_switch_time_ =  1.321 * exp(-0.289 * abs(filtered_v_yaw_)) * config_.traject_ahead_;
   yaw_subtract_ = after_fly_time_yaw_ - output_yaw_central;
   while (yaw_subtract_ > M_PI)
@@ -205,7 +205,7 @@ bool BulletSolver::solve(geometry_msgs::Point pos, geometry_msgs::Vector3 vel, d
        start_using_traject_time = ros::Time::now();
      }
    }
-  double filtered_aim_armor_yaw = filtered_yaw_ + selected_armor_ * 1.9;
+  double filtered_aim_armor_yaw = filtered_yaw_ + selected_armor_ * 1.75;
   double aim_yaw_subtract = filtered_aim_armor_yaw - output_yaw_central;
   while (aim_yaw_subtract > M_PI)
     aim_yaw_subtract -= 2 * M_PI;
@@ -218,8 +218,8 @@ bool BulletSolver::solve(geometry_msgs::Point pos, geometry_msgs::Vector3 vel, d
   double error = 999;
   if (track_target_)
   {
-    target_pos_.x = pos.x - r * cos(yaw + selected_armor_ * 1.9);
-    target_pos_.y = pos.y - r * sin(yaw + selected_armor_ * 1.9);
+    target_pos_.x = pos.x - r * cos(yaw + selected_armor_ * 1.75);
+    target_pos_.y = pos.y - r * sin(yaw + selected_armor_ * 1.75);
   }
   else
   {
@@ -508,13 +508,22 @@ void BulletSolver::judgeShootBeforehand(const ros::Time& time, double v_yaw)
   {
     if ((ros::Time::now().toSec() > (switch_armor_time_.toSec() + traject_switch_time_ - config_.delay) && abs(filtered_v_yaw_) > 4) &&
         (ros::Time::now().toSec() < (switch_armor_time_.toSec() + traject_switch_time_ + switchtime - config_.delay)))
-      shoot_beforehand_cmd_ = rm_msgs::ShootBeforehandCmd::BAN_SHOOT;
+      shoot_beforehand_cmd_ = rm_msgs::ShootBeforehandCmd::JUDGE_BY_ERROR;
     else if (ros::Time::now().toSec() > (start_using_traject_time.toSec() + switchtime - config_.delay) && abs(filtered_v_yaw_) > 4 &&
              (ros::Time::now().toSec() < (start_using_traject_time.toSec() + switchtime)))
-      shoot_beforehand_cmd_ = rm_msgs::ShootBeforehandCmd::ALLOW_SHOOT;
+      shoot_beforehand_cmd_ = rm_msgs::ShootBeforehandCmd::JUDGE_BY_ERROR;
     else
       shoot_beforehand_cmd_ = rm_msgs::ShootBeforehandCmd::JUDGE_BY_ERROR;
   }
+  // else if (std::abs(v_yaw) > config_.min_shoot_beforehand_vel )
+  // {
+  //   if ((ros::Time::now() - switch_armor_time_).toSec() < getGimbalSwitchDuration(std::abs(v_yaw)) - config_.delay)
+  //     shoot_beforehand_cmd_ = rm_msgs::ShootBeforehandCmd::BAN_SHOOT;
+  //   if (((ros::Time::now() - switch_armor_time_).toSec() < getGimbalSwitchDuration(std::abs(v_yaw))))
+  //     shoot_beforehand_cmd_ = rm_msgs::ShootBeforehandCmd::ALLOW_SHOOT;
+  //   if (is_in_delay_before_switch_)
+  //     shoot_beforehand_cmd_ = rm_msgs::ShootBeforehandCmd::BAN_SHOOT;
+  // }
   else
     shoot_beforehand_cmd_ = rm_msgs::ShootBeforehandCmd::JUDGE_BY_ERROR;
   if (shoot_beforehand_cmd_pub_->trylock())

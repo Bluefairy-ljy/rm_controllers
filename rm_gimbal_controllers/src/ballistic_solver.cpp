@@ -51,7 +51,7 @@ bool BallisticSolver::solver(const geometry_msgs::TransformStamped& base2gimbal,
     launch2target.z = track_data.position.z - base2gimbal.transform.translation.z;
   }
   double target_dis = std::sqrt(launch2target.x * launch2target.x + launch2target.y * launch2target.y);
-  double target_hgt = launch2target.z-0.10;
+  double target_hgt = config.debug_z;
   double initial_vel = target_dis <= 16.5 ? config.initial_vel_near : config.initial_vel_far;
   std::cout << "target_dis" << target_dis << std::endl << "target_hgt" << target_hgt << std::endl;
   std::cout << launch2target.x << "   " << launch2target.y << "   " << launch2target.z << std::endl;
