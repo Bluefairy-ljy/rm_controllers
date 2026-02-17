@@ -84,48 +84,46 @@ bool BallisticSolver::solver(const geometry_msgs::TransformStamped& base2gimbal,
 double BallisticSolver::simulate(double pitch_angle, double initial_vel, double target_dis, double target_hgt)
 {
   BallisticConfig config = *config_rt_buffer_.readFromRT();
-  std::array<double, 6> state = {{0.0, 0.0, 0.0,initial_vel * std::cos(pitch_angle),0.0,initial_vel * std::sin(pitch_angle)}};
+  std::array<double, 4> state = {{0.0, 0.0, initial_vel * std::cos(pitch_angle),initial_vel * std::sin(pitch_angle)}};
   double t = 0.0;
   double dt = config.max_integration_step;
   double x_prev = 0.0, z_prev = 0.0;
   double x_curr = 0.0, z_curr = 0.0;
-  std::array<double, 6> k1{}, k2{}, k3{}, k4{}, temp{};
-  auto systemEquation = [&config, &target_dis](
-          const std::array<double, 6>& state, std::array<double, 6>& stateDerivative){
-    double vx = state[3], vy = state[4], vz = state[5];
-    double speed = std::sqrt(vx*vx + vy*vy + vz*vz);
+  std::array<double, 4> k1{}, k2{}, k3{}, k4{}, temp{};
+  auto systemEquation = [&](
+          const std::array<double, 4>& state, std::array<double, 4>& stateDerivative){
+    double vx = state[2], vz = state[3];
+    double speed = std::sqrt(vx*vx + vz*vz);
     stateDerivative[0] = vx;
-    stateDerivative[1] = vy;
-    stateDerivative[2] = vz;
+    stateDerivative[1] = vz;
     double fitting_Cd = config.Cd_value + config.Cd_slope * (target_dis - config.Cd_distance);
     double F_drag = 0.5 * config.air_density * fitting_Cd * M_PI * config.radius * config.radius * speed * speed;
     double drag_accel = F_drag / config.mass;
-    stateDerivative[3] = -drag_accel * vx / speed;
-    stateDerivative[4] = -drag_accel * vy / speed;
-    stateDerivative[5] = -config.g - drag_accel * vz / speed;
+    stateDerivative[2] = -drag_accel * vx / speed;
+    stateDerivative[3] = -config.g - drag_accel * vz / speed;
   };
   while (t < config.max_simulation_time && state[0] < target_dis)
   {
      x_prev = x_curr;
      z_prev = z_curr;
      x_curr = state[0];
-     z_curr = state[2];
+     z_curr = state[1];
      // k1 = f(state)
      systemEquation(state, k1);
      // k2 = f(state + dt/2 * k1)
-     for (int i = 0; i < 6; ++i)
+     for (int i = 0; i < 4; ++i)
        temp[i] = state[i] + 0.5 * dt * k1[i];
      systemEquation(temp, k2);
      // k3 = f(state + dt/2 * k2)
-     for (int i = 0; i < 6; ++i)
+     for (int i = 0; i < 4; ++i)
        temp[i] = state[i] + 0.5 * dt * k2[i];
      systemEquation(temp, k3);
      // k4 = f(state + dt * k3)
-     for (int i = 0; i < 6; ++i)
+     for (int i = 0; i < 4; ++i)
         temp[i] = state[i] + dt * k3[i];
      systemEquation(temp, k4);
      // state_new = state + dt/6 * (k1 + 2*k2 + 2*k3 + k4)
-     for (int i = 0; i < 6; ++i)
+     for (int i = 0; i < 4; ++i)
         state[i] += dt / 6.0 * (k1[i] + 2.0*k2[i] + 2.0*k3[i] + k4[i]);
      t += dt;
   }
