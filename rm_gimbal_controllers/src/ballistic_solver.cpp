@@ -90,7 +90,7 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
   double x_prev = 0.0, z_prev = 0.0;
   double x_curr = 0.0, z_curr = 0.0;
   std::array<double, 4> k1{}, k2{}, k3{}, k4{}, temp{};
-  auto systemEquation = [&](
+  auto systemEquation = [&config, target_dis](
           const std::array<double, 4>& state, std::array<double, 4>& stateDerivative){
     double vx = state[2], vz = state[3];
     double speed = std::sqrt(vx*vx + vz*vz);
@@ -131,7 +131,7 @@ double BallisticSolver::simulate(double pitch_angle, double initial_vel, double 
   if (state[0] >= target_dis && std::abs(x_curr - x_prev) > 1e-6)
     z_at_target = z_prev + (z_curr - z_prev) * (target_dis - x_prev) / (x_curr - x_prev);
   else
-    z_at_target = state[2];
+    z_at_target = state[1];
   double a=z_at_target-target_hgt;
   std::cout << "error = " << a << std::endl;
   return z_at_target - target_hgt;
