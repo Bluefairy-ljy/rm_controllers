@@ -4,14 +4,11 @@
 
 #pragma once
 
-#include <boost/numeric/odeint/stepper/runge_kutta4.hpp>
-#include <boost/numeric/odeint/integrate/integrate_const.hpp>
 #include <std_msgs/Bool.h>
 #include <std_msgs/Float32.h>
 #include <realtime_tools/realtime_buffer.h>
 #include <tf2_geometry_msgs/tf2_geometry_msgs.h>
 #include <geometry_msgs/TransformStamped.h>
-#include <geometry_msgs/PointStamped.h>
 #include <dynamic_reconfigure/server.h>
 #include <rm_gimbal_controllers/BallisticSolverConfig.h>
 #include <rm_common/linear_interpolation.h>
@@ -24,10 +21,9 @@ namespace rm_gimbal_controllers
 {
 struct BallisticConfig
 {
-  double mass, radius, gun_len, drag_coff, Cd, air_density, g;
-  double initial_vel_near, initial_vel_far, max_simulation_time, max_integration_step;
+  double mass, radius, gun_offset_x, gun_offset_z, Cd_value, Cd_distance, Cd_slope, air_density, g;
+  double initial_vel, max_simulation_time, max_integration_step;
   double newton_convergence_tol, finite_difference_eps, max_newton_step;
-  double debug_x, debug_y, debug_z;
   int max_newton_iterations;
 };
 
@@ -63,10 +59,6 @@ private:
   realtime_tools::RealtimeBuffer<BallisticConfig> config_rt_buffer_;
   // member variable
   rm_common::LinearInterp output_pitch_match_lut_;
-  geometry_msgs::Point launch_point_;
-  bool used_debug_ = false;
   bool dynamic_reconfig_initialized_{};
-  // ODE stepper
-  typedef boost::numeric::odeint::runge_kutta4<std::array<double, 6>> stepper_;
 };
 }  // namespace rm_gimbal_controllers
