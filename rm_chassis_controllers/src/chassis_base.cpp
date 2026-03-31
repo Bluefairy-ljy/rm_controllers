@@ -265,14 +265,20 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
     {
       try
       {
-        geometry_msgs::TransformStamped global_map2lidar_odom =
+        robot_base2lidar_base_ =
             robot_state_handle_.lookupTransform(robot_base_frame_id_, lidar_base_frame_id_, ros::Time(0));
-        T_global_map2lidar_odom_.setOrigin(tf2::Vector3(global_map2lidar_odom.transform.translation.x,
-                                                        global_map2lidar_odom.transform.translation.y,
-                                                        global_map2lidar_odom.transform.translation.z));
+        T_global_map2lidar_odom_.setOrigin(tf2::Vector3(robot_base2lidar_base_.transform.translation.x,
+                                                        robot_base2lidar_base_.transform.translation.y,
+                                                        robot_base2lidar_base_.transform.translation.z));
         T_global_map2lidar_odom_.setRotation(
-            tf2::Quaternion(global_map2lidar_odom.transform.rotation.x, global_map2lidar_odom.transform.rotation.y,
-                            global_map2lidar_odom.transform.rotation.z, global_map2lidar_odom.transform.rotation.w));
+            tf2::Quaternion(robot_base2lidar_base_.transform.rotation.x, robot_base2lidar_base_.transform.rotation.y,
+                            robot_base2lidar_base_.transform.rotation.z, robot_base2lidar_base_.transform.rotation.w));
+        T_global_map2world_.setOrigin(tf2::Vector3(robot_base2lidar_base_.transform.translation.x,
+                                                   robot_base2lidar_base_.transform.translation.y,
+                                                   robot_base2lidar_base_.transform.translation.z));
+        T_global_map2world_.setRotation(
+            tf2::Quaternion(robot_base2lidar_base_.transform.rotation.x, robot_base2lidar_base_.transform.rotation.y,
+                            robot_base2lidar_base_.transform.rotation.z, robot_base2lidar_base_.transform.rotation.w));
         odom_initialized_ = true;
       }
       catch (...)
@@ -287,12 +293,13 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
       {
         localization_updated_ = false;
         const auto& localization = localization_rt_buffer_.readFromRT();
-        T_global_map2lidar_odom_.setOrigin(tf2::Vector3(localization->transform.translation.x,
+        T_world2lidar_odom_.setOrigin(tf2::Vector3(localization->transform.translation.x,
                                                         localization->transform.translation.y,
                                                         localization->transform.translation.z));
-        T_global_map2lidar_odom_.setRotation(
+        T_world2lidar_odom_.setRotation(
             tf2::Quaternion(localization->transform.rotation.x, localization->transform.rotation.y,
                             localization->transform.rotation.z, localization->transform.rotation.w));
+        T_global_map2lidar_odom_ = T_global_map2world_ * T_world2lidar_odom_;
       }
       catch (...)
       {
@@ -312,8 +319,6 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
             tf2::Quaternion(slam->pose.pose.orientation.x, slam->pose.pose.orientation.y, slam->pose.pose.orientation.z,
                             slam->pose.pose.orientation.w));
 
-        robot_base2lidar_base_ =
-            robot_state_handle_.lookupTransform(robot_base_frame_id_, lidar_base_frame_id_, ros::Time(0));
         T_robot_base2lidar_base_.setOrigin(tf2::Vector3(robot_base2lidar_base_.transform.translation.x,
                                                         robot_base2lidar_base_.transform.translation.y,
                                                         robot_base2lidar_base_.transform.translation.z));
@@ -330,6 +335,9 @@ void ChassisBase<T...>::updateOdom(const ros::Time& time, const ros::Duration& p
 
         T_global_map2robot_odom_ = T_global_map2lidar_odom_ * T_lidar_odom2lidar_base_ *
                                    T_robot_base2lidar_base_.inverse() * T_robot_odom_2robot_base_.inverse();
+        tf2::Quaternion q = T_global_map2robot_odom_.getRotation();
+        q.normalize();
+        T_global_map2robot_odom_.setRotation(q);
         global_map2robot_odom_.transform = tf2::toMsg(T_global_map2robot_odom_);
       }
       catch (...)

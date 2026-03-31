@@ -172,6 +172,8 @@ protected:
   tf2::Transform T_lidar_odom2lidar_base_{};
   tf2::Transform T_robot_base2lidar_base_{};
   tf2::Transform T_global_map2lidar_odom_{};
+  tf2::Transform T_global_map2world_{};
+  tf2::Transform T_world2lidar_odom_{};
 
   ros::Subscriber cmd_vel_sub_;
   ros::Subscriber cmd_chassis_sub_;
